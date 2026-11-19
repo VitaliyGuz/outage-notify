@@ -35,15 +35,32 @@ self.addEventListener('fetch', event => {
         || Response.error()));
 });
 
-// A push carries every queue's schedule, {days: {iso date: {queue: cells}}}; the status shown is the
-// selected queue's. Every push must end in a notification, so one is shown even with no schedule.
+const MAX_AGE_MS = 15 * 60e3;
+
+// The schedule for the status: the copy the page or an earlier push left, loaded anew once it is
+// older than MAX_AGE_MS, and the old copy again when the source cannot be reached.
+async function schedule(prefs) {
+  const copy = await (await prefs.match('schedule'))?.json();
+  if (copy && Date.now() - copy.fetchedAt < MAX_AGE_MS) return copy.days;
+  try {
+    const response = await fetch(SOURCE, {cache: 'no-store'});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const fresh = {...parseSchedule(await response.text()), fetchedAt: Date.now()};
+    await prefs.put('schedule', new Response(JSON.stringify(fresh)));
+    return fresh.days;
+  } catch (e) {
+    console.warn('schedule not loaded:', e);
+    return copy?.days ?? {};
+  }
+}
+
+// A push is only a nudge: the sender's servers cannot reach the source, the phone can, so the worker
+// loads the schedule itself. Every push must end in a notification, so one is shown even without it.
 self.addEventListener('push', event => {
   event.waitUntil((async () => {
-    let days = {};
-    try { days = event.data.json().days; } catch {}
-    const saved = await (await caches.open(PREFS)).match('queue');
-    const queue = saved ? await saved.text() : '3.1';
-    const notice = statusNotice(daysOf(days, queue), kyivNow());
+    const prefs = await caches.open(PREFS);
+    const queue = await (await prefs.match('queue'))?.json() ?? '3.1';
+    const notice = statusNotice(daysOf(await schedule(prefs), queue), kyivNow());
     await self.registration.showNotification(notice.title, statusOptions(notice));
   })());
 });

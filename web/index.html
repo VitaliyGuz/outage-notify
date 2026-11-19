@@ -188,14 +188,9 @@
 
 <script src="schedule.js"></script>
 <script>
-const SOURCE = 'https://www.poe.pl.ua/customs/dynamicgpv-info.php';
 // The public half of the key pair the status push is signed with; the status switch stays hidden without it.
 const VAPID_PUBLIC_KEY = 'BF5-2NY2Un22wD8YqqqAabhGnaqdK_Sk1XVRjV-ieRhI13UnxteOVpwOKYbF8JRmwVJLE3ifQpRU1EAxqDAsUQU';
 const WINDOW = 24, LEAD_MIN = 15, REFRESH_MS = 10 * 60e3;
-const MONTHS = ['січня', 'лютого', 'березня', 'квітня', 'травня', 'червня',
-                'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня'];
-const DATE_RE = new RegExp(`(\\d{1,2}) (${MONTHS.join('|')}) (\\d{4})`);
-const QUEUES = [1, 2, 3, 4, 5, 6].flatMap(q => [`${q}.1`, `${q}.2`]);
 
 const $ = id => document.getElementById(id);
 const mod = (n, m) => ((n % m) + m) % m;
@@ -209,28 +204,6 @@ const store = {
 
 const dayLabel = new Intl.DateTimeFormat('ru', {timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long'});
 const timeLabel = new Intl.DateTimeFormat('ru', {timeZone: TZ, hour: '2-digit', minute: '2-digit'});
-
-// The source is parsed in an inert document and never inserted into the page.
-// Returns every queue's half-hours per day: {iso date: {queue: cells}}.
-function parseSchedule(html) {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  const days = {};
-  for (const block of doc.querySelectorAll('.gpvinfodetail')) {
-    const day = block.textContent.match(DATE_RE);
-    if (!day) continue;
-    const queues = {};
-    for (const row of block.querySelector('table')?.rows ?? []) {
-      const name = row.cells[0]?.textContent.trim();
-      if (!QUEUES.includes(name)) continue;
-      const cells = [...row.querySelectorAll('td.gpv-c')].map(td => td.className.match(/gpv-s([123])/)?.[1] ?? '').join('');
-      if (cells.length !== SLOTS) throw new Error(`queue ${name}: expected ${SLOTS} half-hours, got ${cells.length}`);
-      queues[name] = cells;
-    }
-    if (Object.keys(queues).length) days[`${day[3]}-${pad(MONTHS.indexOf(day[2]) + 1)}-${pad(day[1])}`] = queues;
-  }
-  const updated = doc.body.textContent.match(new RegExp(`Оновлено:\\s*${DATE_RE.source}\\s+(\\d{1,2}:\\d{2})`));
-  return {days, updated: updated && `${pad(updated[1])}.${pad(MONTHS.indexOf(updated[2]) + 1)} в ${updated[4]}`};
-}
 
 // Half-hour states on one axis counted from today's midnight (-48..-1 yesterday, 48..95 tomorrow);
 // undefined where no schedule is known.
@@ -475,6 +448,7 @@ async function load() {
     const kept = data?.days[yesterday] ? {[yesterday]: data.days[yesterday]} : {};
     data = {days: {...kept, ...fresh.days}, updated: fresh.updated, fetchedAt: Date.now()};
     store.set('schedule', data);
+    leave('schedule', data);
     failed = false;
   } catch (e) {
     console.warn('schedule not loaded:', e);
@@ -526,8 +500,9 @@ async function showStatus() {
   await registration.showNotification(notice.title, statusOptions(notice));
 }
 
-const shareQueue = () => 'caches' in window
-  && caches.open(PREFS).then(cache => cache.put('queue', new Response(queue))).catch(() => {});
+// What the service worker needs from the page, left where it can read it.
+const leave = (key, value) => 'caches' in window
+  && caches.open(PREFS).then(cache => cache.put(key, new Response(JSON.stringify(value)))).catch(() => {});
 
 async function notifyIfDue() {
   if (!notifyOn() || !data) return;
@@ -587,7 +562,7 @@ $('refresh').addEventListener('click', load);
 $('queue').addEventListener('change', e => {
   queue = e.target.value;
   store.set('queue', queue);
-  shareQueue();
+  leave('queue', queue);
   render();
   notifyIfDue();
   showStatus();
@@ -600,7 +575,7 @@ document.addEventListener('visibilitychange', () => {
 for (const q of QUEUES) $('queue').add(new Option(q, q, false, q === queue));
 buildDial();
 renderNotify();
-shareQueue();
+leave('queue', queue);
 load();
 setInterval(() => { render(); notifyIfDue(); showStatus(); }, 20e3);
 setInterval(load, REFRESH_MS);

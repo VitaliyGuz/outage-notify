@@ -1,8 +1,14 @@
 // Schedule logic shared by the page and the service worker (which loads it with importScripts).
 
+const SOURCE = 'https://www.poe.pl.ua/customs/dynamicgpv-info.php';
 const SLOTS = 48;
 const ON = '1', OFF = '2', MAYBE = '3';
-// The service worker cannot read localStorage; the page leaves the selected queue for it in this cache.
+const QUEUES = [1, 2, 3, 4, 5, 6].flatMap(q => [`${q}.1`, `${q}.2`]);
+const MONTHS = ['січня', 'лютого', 'березня', 'квітня', 'травня', 'червня',
+                'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня'];
+const DATE = `(\\d{1,2}) (${MONTHS.join('|')}) (\\d{4})`;
+// The service worker cannot read localStorage; the page leaves the selected queue and its copy of
+// the schedule for it in this cache.
 const PREFS = 'svet-prefs';
 
 const pad = n => String(n).padStart(2, '0');
@@ -24,6 +30,30 @@ function kyivNow() {
 function shiftDate(iso, days) {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+// Every queue's half-hours per day, {iso date: {queue: cells}}, and when the source last changed it.
+// Works on the text alone: a service worker has no DOM to parse the page with.
+function parseSchedule(html) {
+  const days = {};
+  for (const part of html.split('class="gpvinfodetail"').slice(1)) {
+    const block = part.replace(/<style[\s\S]*?<\/style>/g, '');
+    // "року" tells the day's heading from the "Оновлено" stamp, which carries a date too.
+    const day = block.match(new RegExp(`${DATE} року`));
+    const table = block.match(/<table[\s\S]*?<\/table>/);
+    if (!day || !table) continue;
+    const queues = {};
+    for (const [row] of table[0].matchAll(/<tr[\s\S]*?<\/tr>/g)) {
+      const name = row.match(/<t[dh] class="gpv-q[^"]*"[^>]*>\s*([\d.]+)\s*</)?.[1];
+      if (!QUEUES.includes(name)) continue;
+      const cells = [...row.matchAll(/<td class="gpv-c gpv-s([123])/g)].map(cell => cell[1]).join('');
+      if (cells.length !== SLOTS) throw new Error(`queue ${name}: expected ${SLOTS} half-hours, got ${cells.length}`);
+      queues[name] = cells;
+    }
+    if (Object.keys(queues).length) days[`${day[3]}-${pad(MONTHS.indexOf(day[2]) + 1)}-${pad(day[1])}`] = queues;
+  }
+  const updated = html.replace(/<[^>]*>/g, ' ').match(new RegExp(`Оновлено:\\s*${DATE}\\s+(\\d{1,2}:\\d{2})`));
+  return {days, updated: updated && `${pad(updated[1])}.${pad(MONTHS.indexOf(updated[2]) + 1)} в ${updated[4]}`};
 }
 
 // One queue's days out of a schedule that holds every queue: {iso date: {queue: cells}} -> {iso date: cells}.
@@ -63,7 +93,7 @@ function status(cells, minutes) {
 // The status as a notification: what holds now and what follows it. The state names its icons.
 function statusNotice(days, now) {
   const cells = days[now.date];
-  if (!cells) return {state: 'maybe', title: 'Графика на сегодня нет', body: 'Источник его не публикует'};
+  if (!cells) return {state: 'maybe', title: 'Графика на сегодня нет', body: ''};
   const {state, end} = current(cells, now.minutes);
   const [title, until] = status(cells, now.minutes);
   const later = end < SLOTS ? cells : days[shiftDate(now.date, 1)];
