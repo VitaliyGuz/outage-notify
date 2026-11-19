@@ -3,13 +3,18 @@
 const SOURCE = 'https://www.poe.pl.ua/customs/dynamicgpv-info.php';
 const SLOTS = 48;
 const ON = '1', OFF = '2', MAYBE = '3';
+const NAMES = {[ON]: 'on', [OFF]: 'off', [MAYBE]: 'maybe'};
 const QUEUES = [1, 2, 3, 4, 5, 6].flatMap(q => [`${q}.1`, `${q}.2`]);
+const DEFAULT_QUEUE = '3.1';
 const MONTHS = ['січня', 'лютого', 'березня', 'квітня', 'травня', 'червня',
                 'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня'];
 const DATE = `(\\d{1,2}) (${MONTHS.join('|')}) (\\d{4})`;
 // The service worker cannot read localStorage; the page leaves the selected queue and its copy of
 // the schedule for it in this cache.
 const PREFS = 'svet-prefs';
+const prefsGet = async key => (await (await caches.open(PREFS)).match(key))?.json();
+const prefsPut = async (key, value) => (await caches.open(PREFS)).put(key, new Response(JSON.stringify(value)));
+const STATUS_TAG = 'status';
 
 const pad = n => String(n).padStart(2, '0');
 const hhmm = slot => slot === SLOTS ? '24:00' : `${pad(slot >> 1)}:${slot % 2 ? '30' : '00'}`;
@@ -47,13 +52,23 @@ function parseSchedule(html) {
       const name = row.match(/<t[dh] class="gpv-q[^"]*"[^>]*>\s*([\d.]+)\s*</)?.[1];
       if (!QUEUES.includes(name)) continue;
       const cells = [...row.matchAll(/<td class="gpv-c gpv-s([123])/g)].map(cell => cell[1]).join('');
-      if (cells.length !== SLOTS) throw new Error(`queue ${name}: expected ${SLOTS} half-hours, got ${cells.length}`);
-      queues[name] = cells;
+      // A broken row costs its own queue the day, not every queue the whole schedule.
+      if (cells.length === SLOTS) queues[name] = cells;
+      else console.warn(`queue ${name}: expected ${SLOTS} half-hours, got ${cells.length}`);
     }
     if (Object.keys(queues).length) days[`${day[3]}-${pad(MONTHS.indexOf(day[2]) + 1)}-${pad(day[1])}`] = queues;
   }
   const updated = html.replace(/<[^>]*>/g, ' ').match(new RegExp(`Оновлено:\\s*${DATE}\\s+(\\d{1,2}:\\d{2})`));
   return {days, updated: updated && `${pad(updated[1])}.${pad(MONTHS.indexOf(updated[2]) + 1)} в ${updated[4]}`};
+}
+
+// The source's schedule as it is now, stamped with the time it was read. The time limit keeps a
+// dead connection from holding the page's "loading" state or the worker's push event open; browsers
+// too old to have AbortSignal.timeout go without it.
+async function fetchSchedule() {
+  const response = await fetch(SOURCE, {cache: 'no-store', signal: AbortSignal.timeout?.(30e3)});
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return {...parseSchedule(await response.text()), fetchedAt: Date.now()};
 }
 
 // One queue's days out of a schedule that holds every queue: {iso date: {queue: cells}} -> {iso date: cells}.
@@ -100,7 +115,7 @@ function statusNotice(days, now) {
   const minute = end % SLOTS * 30;
   const next = later && {[ON]: 'свет', [OFF]: 'без света', [MAYBE]: 'переключения'}[current(later, minute).state];
   return {
-    state: {[ON]: 'on', [OFF]: 'off', [MAYBE]: 'maybe'}[state],
+    state: NAMES[state],
     title: `${title} ${until}`,
     body: later ? `${end < SLOTS ? 'Потом' : 'Завтра'} ${next} ${status(later, minute)[1]}` : 'Графика на завтра пока нет',
   };
@@ -108,6 +123,6 @@ function statusNotice(days, now) {
 
 // One notification, replaced in place and without a sound each time the status is shown again.
 const statusOptions = notice => ({
-  body: notice.body, tag: 'status', silent: true, renotify: false,
+  body: notice.body, tag: STATUS_TAG, silent: true,
   icon: `status-${notice.state}.png`, badge: `badge-${notice.state}.png`,
 });

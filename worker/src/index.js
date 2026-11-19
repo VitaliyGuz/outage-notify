@@ -7,8 +7,10 @@
 const PUSH_HOSTS = [/^fcm\.googleapis\.com$/, /\.push\.services\.mozilla\.com$/, /\.push\.apple\.com$/,
                     /\.notify\.windows\.com$/];
 const MAX_SUBSCRIPTIONS = 500;
-// The free plan allows 50 outgoing requests per run; a longer list is nudged in turns.
+// The free plan allows 50 outgoing requests per run; a longer list is nudged in turns, one batch
+// per run. PERIOD_MS is the cron period in wrangler.toml: the turn must advance by one each run.
 const BATCH = 45;
+const PERIOD_MS = 5 * 60e3;
 // A nudge the device has not fetched within TTL is dropped, and a newer one under the same topic
 // replaces it, so a phone that was asleep wakes up to a single nudge.
 const TTL = 15 * 60;
@@ -28,13 +30,18 @@ function pushEndpoint(value) {
   }
 }
 
-async function register(request, env) {
+const forget = (env, endpoint) => env.DB.prepare('DELETE FROM subscriptions WHERE endpoint = ?').bind(endpoint).run();
+
+// Adds the device in the request to the list or, on the unsubscribe route, removes it; returns the HTTP status.
+async function register(request, env, remove) {
   const endpoint = pushEndpoint((await request.json().catch(() => ({}))).endpoint);
   if (!endpoint) return 400;
-  if (new URL(request.url).pathname === '/unsubscribe') {
-    await env.DB.prepare('DELETE FROM subscriptions WHERE endpoint = ?').bind(endpoint).run();
+  if (remove) {
+    await forget(env, endpoint);
     return 204;
   }
+  // A device already on the list is welcome back even when the list is full.
+  if (await env.DB.prepare('SELECT 1 FROM subscriptions WHERE endpoint = ?').bind(endpoint).first()) return 204;
   const {total} = await env.DB.prepare('SELECT COUNT(*) AS total FROM subscriptions').first();
   if (total >= MAX_SUBSCRIPTIONS) return 507;
   await env.DB.prepare('INSERT OR IGNORE INTO subscriptions (endpoint) VALUES (?)').bind(endpoint).run();
@@ -56,7 +63,7 @@ async function vapid(env, audience) {
 
 async function nudge(env) {
   const {results} = await env.DB.prepare('SELECT endpoint FROM subscriptions ORDER BY endpoint').all();
-  const turn = Math.floor(Date.now() / 300e3) % Math.max(1, Math.ceil(results.length / BATCH));
+  const turn = Math.floor(Date.now() / PERIOD_MS) % Math.max(1, Math.ceil(results.length / BATCH));
   const headers = new Map();
   const outcomes = await Promise.all(results.slice(turn * BATCH, (turn + 1) * BATCH).map(async ({endpoint}) => {
     const audience = new URL(endpoint).origin;
@@ -64,11 +71,11 @@ async function nudge(env) {
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: {Authorization: await headers.get(audience), TTL: String(TTL), Topic: TOPIC, Urgency: 'normal'},
+        headers: {Authorization: await headers.get(audience), TTL: String(TTL), Topic: TOPIC},
       });
       // The push service no longer knows the device: the app was removed or its data cleared.
       if (response.status === 404 || response.status === 410) {
-        await env.DB.prepare('DELETE FROM subscriptions WHERE endpoint = ?').bind(endpoint).run();
+        await forget(env, endpoint);
         return 'expired';
       }
       return response.ok ? 'sent' : `refused ${response.status}`;
@@ -85,13 +92,17 @@ export default {
   async fetch(request, env) {
     const origin = request.headers.get('Origin');
     if (!env.ALLOWED_ORIGINS.split(',').includes(origin)) return new Response(null, {status: 403});
-    const cors = {'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Headers': 'Content-Type', Vary: 'Origin'};
+    const cors = {
+      'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Max-Age': '86400', Vary: 'Origin',
+    };
     if (request.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
-    const known = request.method === 'POST' && ['/subscribe', '/unsubscribe'].includes(new URL(request.url).pathname);
-    return new Response(null, {status: known ? await register(request, env) : 404, headers: cors});
+    const path = new URL(request.url).pathname;
+    const known = request.method === 'POST' && ['/subscribe', '/unsubscribe'].includes(path);
+    return new Response(null, {status: known ? await register(request, env, path === '/unsubscribe') : 404, headers: cors});
   },
 
-  async scheduled(controller, env, ctx) {
+  async scheduled(_controller, env, ctx) {
     ctx.waitUntil(nudge(env));
   },
 };

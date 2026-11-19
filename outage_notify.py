@@ -11,12 +11,14 @@ Meant to run once a minute (launchd, com.vitalii.outage-notify.plist):
 
 Settings live in config.env next to this file.
 """
+import gzip
 import json
 import math
 import re
 import sys
 import urllib.parse
 import urllib.request
+import zlib
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -62,9 +64,18 @@ def log(message):
 
 
 def fetch():
-    req = urllib.request.Request(SOURCE, headers={"User-Agent": "outage-notify (personal schedule alert)"})
+    # Compressed, the page is a dozen times smaller; urllib neither asks for that nor unpacks it itself.
+    req = urllib.request.Request(SOURCE, headers={"User-Agent": "outage-notify (personal schedule alert)",
+                                                  "Accept-Encoding": "gzip"})
     with urllib.request.urlopen(req, timeout=30) as r:
-        return r.read().decode("utf-8", errors="replace")
+        body = r.read()
+        if r.headers.get("Content-Encoding") == "gzip":
+            try:
+                body = gzip.decompress(body)
+            except (EOFError, zlib.error) as e:
+                # Reported like any other failed download, so the cached schedule stays in use.
+                raise OSError(f"damaged gzip answer: {e}") from e
+    return body.decode("utf-8", errors="replace")
 
 
 def parse_schedule(html, queue):

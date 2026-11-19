@@ -8,3 +8,4 @@ com.vitalii.outage-notify.plist
 .dev.vars
 .wrangler/
 node_modules/
+.idea/

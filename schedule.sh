@@ -66,7 +66,7 @@ main() {
   local queue="${1:-3.1}" html day slots count
   [[ "$queue" =~ ^[0-9]\.[0-9]$ ]] || die "usage: $0 [queue], e.g. 3.1" 2
 
-  html="$(curl -fsS --max-time 30 "$SOURCE_URL")"
+  html="$(curl -fsS --compressed --max-time 30 "$SOURCE_URL")"
   day="$(schedule_date "$html")" || die "cannot read the schedule date"
   slots="$(queue_slots "$html" "$queue" || true)"
   count="$(grep -c . <<<"$slots" || true)"

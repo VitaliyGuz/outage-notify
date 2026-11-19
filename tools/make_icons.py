@@ -22,27 +22,26 @@ def polar(x, y):
     return math.hypot(x, y), math.degrees(math.atan2(x, -y)) % 360
 
 
-def app(x, y):
-    r, deg = polar(x, y)
-    if r <= 0.085:
-        return (*NOW, 255)
-    if 0.25 <= r <= 0.36 and any(a <= deg <= b for a, b in ARCS):
-        return (*POWER, 255)
-    return (*BG, 255)
-
-
-def status(state):
+def dial(ring):
+    """The amber centre on night blue, with the ring band coloured by ring(r, deg), None for no ink."""
     def colour(x, y):
         r, deg = polar(x, y)
         if r <= 0.085:
             return (*NOW, 255)
-        if 0.25 <= r <= 0.36:
-            if state == "on" or (state == "maybe" and int(deg // 15) % 2 == 0):
-                return (*POWER, 255)
-            if state == "off" and not 0.27 < r < 0.34:
-                return (*MUTED, 255)
-        return (*BG, 255)
+        return (*(0.25 <= r <= 0.36 and ring(r, deg) or BG), 255)
     return colour
+
+
+app = dial(lambda r, deg: POWER if any(a <= deg <= b for a, b in ARCS) else None)
+
+
+def status(state):
+    def ring(r, deg):
+        if state == "on" or (state == "maybe" and int(deg // 15) % 2 == 0):
+            return POWER
+        if state == "off" and not 0.27 < r < 0.34:
+            return MUTED
+    return dial(ring)
 
 
 def badge(state):

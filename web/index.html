@@ -186,7 +186,7 @@
 <script src="schedule.js"></script>
 <script>
 // The status push: the public half of the key pair it is signed with, and the worker that keeps the
-// list of devices to nudge (worker/). The status switch stays hidden without either.
+// list of devices to nudge (worker/).
 const VAPID_PUBLIC_KEY = 'BF5-2NY2Un22wD8YqqqAabhGnaqdK_Sk1XVRjV-ieRhI13UnxteOVpwOKYbF8JRmwVJLE3ifQpRU1EAxqDAsUQU';
 const PUSH_API = 'https://outage-notify.vitaliy-guz.workers.dev';
 const WINDOW = 24, LEAD_MIN = 15, REFRESH_MS = 10 * 60e3;
@@ -194,11 +194,16 @@ const WINDOW = 24, LEAD_MIN = 15, REFRESH_MS = 10 * 60e3;
 const $ = id => document.getElementById(id);
 const mod = (n, m) => ((n % m) + m) % m;
 
+// The service worker cannot read localStorage, so what it needs is also left in the cache it can read.
+const SHARED = ['queue', 'schedule'];
 const store = {
   get(key, fallback) {
     try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch { return fallback; }
   },
-  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} },
+  set(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+    if (SHARED.includes(key) && 'caches' in window) prefsPut(key, value).catch(() => {});
+  },
 };
 
 const dayLabel = new Intl.DateTimeFormat('ru', {timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long'});
@@ -214,29 +219,29 @@ function timeline(days, today) {
 // The 12-hour window opens at the last switch between power and outage (switching time belongs to
 // the outage); with no switch in the last 12 hours it opens at the current hour. A window that would
 // run into a tomorrow not published yet is the second half of today instead.
-function windowStart(at, minutes) {
-  const slot = Math.floor(minutes / 30);
+function windowStart(at, slot) {
   const lit = at(slot) === ON;
   let start = slot;
   while (slot - start < WINDOW && at(start - 1) !== undefined && (at(start - 1) === ON) === lit) start--;
-  if (minutes - start * 30 >= WINDOW * 30) start = Math.floor(minutes / 60) * 2;
+  if (slot - start >= WINDOW) start = slot - slot % 2;
   return at(start + WINDOW - 1) === undefined ? SLOTS - WINDOW : start;
 }
+// Each clock position holds the one half-hour of the window that falls on it.
+const slotAt = (start, position) => start + mod(position - start, WINDOW);
 
-// The stretch of the timeline around a slot that shares its state: lit (true), without guaranteed
-// power (false) or not published (undefined). An open side borders on a day with no schedule.
+// The stretch of the timeline around a published slot that shares its state: lit or without
+// guaranteed power. An open side borders on a day with no schedule.
 function period(at, slot) {
   const lit = s => at(s) && at(s) === ON;
   let start = slot, end = slot + 1, firmEnd = null;
-  while (start > -SLOTS && lit(start - 1) === lit(slot)) start--;
-  while (end < 2 * SLOTS && lit(end) === lit(slot)) end++;
+  while (lit(start - 1) === lit(slot)) start--;
+  while (lit(end) === lit(slot)) end++;
   for (let s = start; s < end; s++) if (at(s) === OFF) firmEnd = s + 1;
   return {start, end, firmEnd, lit: lit(slot), openStart: at(start - 1) === undefined, openEnd: at(end) === undefined};
 }
 
 // Title, time range, duration with the distance from now, and a note: the lines shown for an inspected period.
 function describe(p, minutes) {
-  if (p.lit === undefined) return ['Графика нет', 'на завтра', 'его ещё не опубликовали', ''];
   // Midnight closes a day as 24:00 and opens the next as 00:00.
   const stamp = (slot, closing) => {
     const day = Math.floor((closing ? slot - 1 : slot) / SLOTS);
@@ -247,7 +252,7 @@ function describe(p, minutes) {
   const openEnd = p.openEnd && to === p.end;
   const tense = minutes < p.start * 30 ? 2 : minutes < p.end * 30 ? 1 : 0;
   const title = p.lit ? ['Свет был', 'Свет есть', 'Свет будет'][tense]
-    : p.firmEnd ? ['Света не было', 'Света нет', 'Света не будет'][tense] : 'Переключения';
+    : p.firmEnd !== null ? ['Света не было', 'Света нет', 'Света не будет'][tense] : 'Переключения';
   const range = p.openStart && openEnd ? 'весь день' : p.openStart ? `${till.day}до ${till.time}`
     : openEnd ? `${from.day}с ${from.time}`
     : `${from.day}${from.time} – ${till.day === from.day ? '' : till.day}${till.time}`;
@@ -257,7 +262,7 @@ function describe(p, minutes) {
     : p.openEnd && until === p.end ? '' : `осталось ${span(until * 30 - minutes)}`;
   const length = !p.openStart && !openEnd && span((to - p.start) * 30);
   const note = p.lit ? (openEnd ? 'дальше графика пока нет' : '')
-    : !p.firmEnd ? 'возможно, без света'
+    : p.firmEnd === null ? 'возможно, без света'
     : p.end > p.firmEnd ? `переключения до ${late.day}${late.time}` : '';
   return [title, range, [length, distance].filter(Boolean).join(', '), note];
 }
@@ -267,8 +272,9 @@ function dueAlert(days, now, queue) {
   const tomorrow = shiftDate(now.date, 1);
   for (const [iso, offset] of [[now.date, 0], [tomorrow, 24 * 60]]) {
     for (const o of outages(days[iso] ?? '')) {
-      // An outage running over midnight was announced the day before.
-      if (iso === tomorrow && o.start === 0 && days[now.date]?.at(-1) !== ON) continue;
+      // An outage running over midnight was announced the day before, if that day's schedule is known.
+      const last = days[now.date]?.at(-1);
+      if (iso === tomorrow && o.start === 0 && last && last !== ON) continue;
       const wait = offset + o.start * 30 - now.minutes;
       if (wait <= 0 || wait > LEAD_MIN) continue;
       const tail = o.firmEnd && o.end > o.firmEnd ? ` Включение может задержаться до ${hhmm(o.end)}.` : '';
@@ -285,10 +291,14 @@ function dueAlert(days, now, queue) {
 const NS = 'http://www.w3.org/2000/svg';
 const point = (deg, r) => [180 + r * Math.sin(deg * Math.PI / 180), 180 - r * Math.cos(deg * Math.PI / 180)].map(v => v.toFixed(2));
 const svg = (tag, attrs, parent) => {
-  const el = document.createElementNS(NS, tag);
-  for (const name in attrs) el.setAttribute(name, attrs[name]);
-  return parent.appendChild(el);
+  const node = document.createElementNS(NS, tag);
+  for (const name in attrs) node.setAttribute(name, attrs[name]);
+  return parent.appendChild(node);
 };
+const el = (tag, props) => Object.assign(document.createElement(tag), props);
+// An arc of the dial between two clock positions, inset so that neighbours do not touch.
+const arc = (from, to, r) =>
+  `M${point(from * 15 + 0.9, r)}A${r} ${r} 0 ${(to - from) * 15 > 180 ? 1 : 0} 1 ${point(to * 15 - 0.9, r)}`;
 const segments = [];
 
 // A clock face, 12 on top: one segment per half-hour of the 12-hour window, drawn only where there is power.
@@ -298,9 +308,7 @@ function buildDial() {
     const [x, y] = point(h * 30, 169);
     svg('text', {x, y}, $('scale')).textContent = h;
   }
-  for (let i = 0; i < WINDOW; i++) {
-    segments.push(svg('path', {d: `M${point(i * 15 + 0.9, 132)}A132 132 0 0 1 ${point((i + 1) * 15 - 0.9, 132)}`}, $('ring')));
-  }
+  for (let i = 0; i < WINDOW; i++) segments.push(svg('path', {d: arc(i, i + 1, 132)}, $('ring')));
 }
 
 const LISTS = {
@@ -320,46 +328,42 @@ function listPeriods(section, day, cells, slot, state) {
   }
   const active = periods.find(p => slot < p.end);
   section.querySelector('h2').textContent = `${LISTS[state].title} ${day}`;
-  section.querySelector('ol').replaceChildren(...periods.map(p => {
-    const li = document.createElement('li');
-    li.className = slot >= p.end ? 'past' : p === active && slot >= 0 ? 'next' : '';
-    li.append(Object.assign(document.createElement('span'), {textContent: `${hhmm(p.start)} – ${hhmm(p.end)}`}),
-              Object.assign(document.createElement('span'), {className: 'dur', textContent: span((p.end - p.start) * 30)}));
+  const list = section.querySelector('ol');
+  list.replaceChildren(...periods.map(p => {
+    const li = el('li', {className: slot >= p.end ? 'past' : p === active && slot >= 0 ? 'next' : ''});
+    li.append(el('span', {textContent: `${hhmm(p.start)} – ${hhmm(p.end)}`}),
+              el('span', {className: 'dur', textContent: span((p.end - p.start) * 30)}));
     let late = p.end;
     while (state === OFF && cells[late] === MAYBE) late++;
-    if (late > p.end) li.append(Object.assign(document.createElement('small'), {textContent: `включение может задержаться до ${hhmm(late)}`}));
+    if (late > p.end) li.append(el('small', {textContent: `включение может задержаться до ${hhmm(late)}`}));
     return li;
   }));
-  if (!periods.length) {
-    section.querySelector('ol').append(Object.assign(document.createElement('li'), {className: 'none', textContent: LISTS[state].none}));
-  }
+  if (!periods.length) list.append(el('li', {className: 'none', textContent: LISTS[state].none}));
 }
 
-let queue = store.get('queue', '3.1');
+let queue = store.get('queue', DEFAULT_QUEUE);
 let shown = store.get('list', OFF);
 if (!LISTS[shown]) shown = OFF;
 let data = store.get('schedule', null);
 let loading = false;
 let failed = false;
 let probe = null;
-// A copy saved when only one queue was kept has a different shape and cannot be reused.
-if (data?.queue) data = null;
+// What the last render put on the dial, for a probe to be drawn without rendering the page again.
+let view = null;
 
 // The cached copy holds every queue; this is the selected one's days.
 const queueDays = () => daysOf(data?.days ?? {}, queue);
 
 // probe is the clock position under the pointer (or last tapped); the whole period it falls in is
 // bracketed outside the ring and described in the centre.
-function renderProbe(at, start, now) {
-  const slot = probe === null ? null : start + mod(probe - start, WINDOW);
-  const p = slot === null ? null : period(at, slot);
+function renderProbe() {
+  const p = view && probe !== null ? period(view.at, slotAt(view.start, probe)) : null;
   $('dial').classList.toggle('probing', !!p);
   $('tip').hidden = !p;
   $('mark').toggleAttribute('hidden', !p);
   if (!p) return;
-  const from = Math.max(p.start, start), to = Math.min(p.end, start + WINDOW);
-  $('mark').setAttribute('d', `M${point(from * 15 + 0.9, 148)}A148 148 0 ${(to - from) * 15 > 180 ? 1 : 0} 1 ${point(to * 15 - 0.9, 148)}`);
-  describe(p, now.minutes).forEach((text, i) => {
+  $('mark').setAttribute('d', arc(Math.max(p.start, view.start), Math.min(p.end, view.start + WINDOW), 148));
+  describe(p, kyivNow().minutes).forEach((text, i) => {
     const line = $('tip').children[i];
     line.textContent = text;
     line.hidden = !text;
@@ -370,8 +374,8 @@ function renderProbe(at, start, now) {
 // switch for which of the three the lists below show.
 function renderTotals(cells) {
   for (const card of $('legend').children) {
-    const slots = cells ? cells.split(card.dataset.state).length - 1 : null;
-    card.querySelector('span').textContent = cells ? `${String(slots / 2).replace('.', ',')} ч` : '';
+    const hours = cells && (cells.split(card.dataset.state).length - 1) / 2;
+    card.querySelector('span').textContent = cells ? `${hours.toLocaleString('ru')} ч` : '';
     card.setAttribute('aria-pressed', card.dataset.state === shown);
   }
 }
@@ -385,7 +389,7 @@ function probeAt(event) {
 function setProbe(position) {
   if (position === probe) return;
   probe = position;
-  render();
+  renderProbe();
 }
 
 function render() {
@@ -396,12 +400,10 @@ function render() {
   $('day').textContent = dayLabel.format(new Date());
 
   const at = timeline(days, now.date);
-  const start = cells ? windowStart(at, now.minutes) : 0;
+  const start = cells ? windowStart(at, slot) : 0;
   segments.forEach((seg, position) => {
-    // Each clock position holds the one half-hour of the window that falls on it.
-    const s = start + mod(position - start, WINDOW);
-    const cell = cells && at(s);
-    const kind = cell === ON ? 'on' : cell === MAYBE ? 'maybe' : '';
+    const s = slotAt(start, position);
+    const kind = cells && NAMES[at(s)] || '';
     seg.setAttribute('class', kind && s < slot ? `${kind} past` : kind);
   });
   $('seam').toggleAttribute('hidden', !cells);
@@ -409,8 +411,9 @@ function render() {
   $('hand').toggleAttribute('hidden', !cells);
   $('hand').setAttribute('transform', `rotate(${now.minutes / 2} 180 180)`);
   $('window').textContent = cells ? `с ${hhmm(mod(start, SLOTS))} до ${hhmm(mod(start + WINDOW - 1, SLOTS) + 1)}` : '';
+  view = cells ? {at, start} : null;
   if (!cells) probe = null;
-  renderProbe(at, start, now);
+  renderProbe();
   renderTotals(cells);
 
   const [state, until, left] = cells ? status(cells, now.minutes)
@@ -439,21 +442,23 @@ async function load() {
   loading = true;
   render();
   try {
-    const res = await fetch(SOURCE, {cache: 'no-store'});
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const fresh = parseSchedule(await res.text());
+    const fresh = await fetchSchedule();
     // Yesterday is kept so a state that began before midnight still has its start.
     const yesterday = shiftDate(kyivNow().date, -1);
     const kept = data?.days[yesterday] ? {[yesterday]: data.days[yesterday]} : {};
-    data = {days: {...kept, ...fresh.days}, updated: fresh.updated, fetchedAt: Date.now()};
+    data = {...fresh, days: {...kept, ...fresh.days}};
     store.set('schedule', data);
-    leave('schedule', data);
     failed = false;
   } catch (e) {
     console.warn('schedule not loaded:', e);
     failed = true;
   }
   loading = false;
+  update();
+}
+
+// The page and both kinds of notification, brought in line with the clock and the schedule.
+function update() {
   render();
   notifyIfDue();
   showStatus();
@@ -462,7 +467,7 @@ async function load() {
 const canNotify = 'Notification' in window && 'serviceWorker' in navigator;
 const isIos = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const notifyOn = () => canNotify && Notification.permission === 'granted' && store.get('notify', false);
-const canPush = canNotify && 'PushManager' in window && !!VAPID_PUBLIC_KEY && !!PUSH_API;
+const canPush = canNotify && 'PushManager' in window;
 const statusOn = () => canPush && Notification.permission === 'granted' && store.get('status', false);
 let pushFailed = false;
 let statusShown = '';
@@ -492,9 +497,10 @@ async function enlist(subscription, on) {
   });
   if (!response.ok) throw new Error(`${PUSH_API}: HTTP ${response.status}`);
 }
-const subscribed = registration => registration.pushManager.getSubscription();
-const subscribe = registration =>
-  registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: VAPID_PUBLIC_KEY});
+const enlistDevice = async registration => enlist(
+  await registration.pushManager.getSubscription()
+    ?? await registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: VAPID_PUBLIC_KEY}),
+  true);
 
 // The status notification is replaced only when its text changes, so one swiped away stays away
 // until then (or until the next push).
@@ -507,10 +513,6 @@ async function showStatus() {
   const registration = await navigator.serviceWorker.ready;
   await registration.showNotification(notice.title, statusOptions(notice));
 }
-
-// What the service worker needs from the page, left where it can read it.
-const leave = (key, value) => 'caches' in window
-  && caches.open(PREFS).then(cache => cache.put(key, new Response(JSON.stringify(value)))).catch(() => {});
 
 async function notifyIfDue() {
   if (!notifyOn() || !data) return;
@@ -533,15 +535,15 @@ $('status').addEventListener('click', async () => {
   if (statusOn()) {
     store.set('status', false);
     statusShown = '';
-    for (const posted of await registration.getNotifications({tag: 'status'})) posted.close();
-    const subscription = await subscribed(registration);
+    for (const posted of await registration.getNotifications({tag: STATUS_TAG})) posted.close();
+    const subscription = await registration.pushManager.getSubscription();
     // Cancelled in the browser first: should the worker miss the request, its next nudge is refused
     // and it drops the device itself.
     await subscription?.unsubscribe();
     if (subscription) enlist(subscription, false).catch(e => console.warn('status push:', e));
   } else if (await Notification.requestPermission() === 'granted') {
     try {
-      await enlist(await subscribed(registration) ?? await subscribe(registration), true);
+      await enlistDevice(registration);
       store.set('status', true);
     } catch (e) {
       console.warn('status push:', e);
@@ -567,30 +569,30 @@ $('refresh').addEventListener('click', load);
 $('queue').addEventListener('change', e => {
   queue = e.target.value;
   store.set('queue', queue);
-  leave('queue', queue);
-  render();
-  notifyIfDue();
-  showStatus();
+  update();
   if (!data || failed) load();
 });
+// Coming back to the page reloads the schedule unless it was loaded within the last minute.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') load();
+  if (document.hidden) return;
+  if (!data || failed || Date.now() - data.fetchedAt > 60e3) load();
+  else update();
 });
 
 for (const q of QUEUES) $('queue').add(new Option(q, q, false, q === queue));
 buildDial();
 renderNotify();
-leave('queue', queue);
+store.set('queue', queue);
 load();
-setInterval(() => { render(); notifyIfDue(); showStatus(); }, 20e3);
-setInterval(load, REFRESH_MS);
+// Nothing on the page changes more often than the minute does, so it is redrawn as each one starts.
+(function tick() {
+  setTimeout(() => { try { update(); } finally { tick(); } }, 60e3 - Date.now() % 60e3 + 50);
+})();
+// A hidden page keeps the schedule fresh only for the notifications it is responsible for.
+setInterval(() => { if (!document.hidden || notifyOn() || statusOn()) load(); }, REFRESH_MS);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 // A device that shows the status enlists again on every start, in case the worker has dropped it.
-if (statusOn()) {
-  navigator.serviceWorker.ready
-    .then(async registration => enlist(await subscribed(registration) ?? await subscribe(registration), true))
-    .catch(e => console.warn('status push:', e));
-}
+if (statusOn()) navigator.serviceWorker.ready.then(enlistDevice).catch(e => console.warn('status push:', e));
 </script>
 </body>
 </html>
