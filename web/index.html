@@ -111,14 +111,12 @@
   .switches p { margin-top: .6rem; color: var(--muted); font-size: .9rem; text-align: center; }
   .switches p:empty { display: none; }
   #status { margin-top: 1.25rem; }
-  #copy { display: block; margin: .6rem auto 0; font-size: .9rem; }
-  #copy, #refresh { background: none; border: 0; padding: 0; text-decoration: underline; text-underline-offset: 3px; }
 
   footer {
     margin-top: 1.75rem; display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem;
     color: var(--muted); font-size: .85rem;
   }
-  #refresh { white-space: nowrap; }
+  #refresh { background: none; border: 0; padding: 0; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -177,7 +175,6 @@
     <p id="notify-hint"></p>
     <button id="status" type="button" hidden></button>
     <p id="status-hint"></p>
-    <button id="copy" type="button" hidden>Скопировать подписку</button>
   </section>
 
   <footer>
@@ -188,8 +185,10 @@
 
 <script src="schedule.js"></script>
 <script>
-// The public half of the key pair the status push is signed with; the status switch stays hidden without it.
+// The status push: the public half of the key pair it is signed with, and the worker that keeps the
+// list of devices to nudge (worker/). The status switch stays hidden without either.
 const VAPID_PUBLIC_KEY = 'BF5-2NY2Un22wD8YqqqAabhGnaqdK_Sk1XVRjV-ieRhI13UnxteOVpwOKYbF8JRmwVJLE3ifQpRU1EAxqDAsUQU';
+const PUSH_API = 'https://outage-notify.vitaliy-guz.workers.dev';
 const WINDOW = 24, LEAD_MIN = 15, REFRESH_MS = 10 * 60e3;
 
 const $ = id => document.getElementById(id);
@@ -463,7 +462,7 @@ async function load() {
 const canNotify = 'Notification' in window && 'serviceWorker' in navigator;
 const isIos = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const notifyOn = () => canNotify && Notification.permission === 'granted' && store.get('notify', false);
-const canPush = canNotify && 'PushManager' in window && !!VAPID_PUBLIC_KEY;
+const canPush = canNotify && 'PushManager' in window && !!VAPID_PUBLIC_KEY && !!PUSH_API;
 const statusOn = () => canPush && Notification.permission === 'granted' && store.get('status', false);
 let pushFailed = false;
 let statusShown = '';
@@ -482,11 +481,20 @@ function renderNotify() {
   $('status').textContent = statusOn() ? 'Убрать статус из шторки' : 'Показывать статус в шторке';
   $('status-hint').textContent = !canPush || blocked ? ''
     : pushFailed ? 'Не получилось подписаться на обновления. Проверьте интернет и попробуйте ещё раз.'
-    : statusOn() ? 'Чтобы статус обновлялся и при закрытом приложении, скопируйте подписку и добавьте её '
-                   + 'в секрет PUSH_SUBSCRIPTIONS репозитория.'
+    : statusOn() ? 'Статус обновляется сам, даже когда приложение закрыто.'
     : 'Постоянное уведомление: есть ли свет и до скольки.';
-  $('copy').hidden = !statusOn();
 }
+
+// Puts this device on the worker's list of devices to nudge, or takes it off.
+async function enlist(subscription, on) {
+  const response = await fetch(`${PUSH_API}/${on ? 'subscribe' : 'unsubscribe'}`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({endpoint: subscription.endpoint}),
+  });
+  if (!response.ok) throw new Error(`${PUSH_API}: HTTP ${response.status}`);
+}
+const subscribed = registration => registration.pushManager.getSubscription();
+const subscribe = registration =>
+  registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: VAPID_PUBLIC_KEY});
 
 // The status notification is replaced only when its text changes, so one swiped away stays away
 // until then (or until the next push).
@@ -522,29 +530,26 @@ $('notify').addEventListener('click', async () => {
 $('status').addEventListener('click', async () => {
   const registration = await navigator.serviceWorker.ready;
   pushFailed = false;
-  try {
-    if (statusOn()) {
-      store.set('status', false);
-      statusShown = '';
-      await (await registration.pushManager.getSubscription())?.unsubscribe();
-      for (const posted of await registration.getNotifications({tag: 'status'})) posted.close();
-    } else if (await Notification.requestPermission() === 'granted') {
-      await registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: VAPID_PUBLIC_KEY});
+  if (statusOn()) {
+    store.set('status', false);
+    statusShown = '';
+    for (const posted of await registration.getNotifications({tag: 'status'})) posted.close();
+    const subscription = await subscribed(registration);
+    // Cancelled in the browser first: should the worker miss the request, its next nudge is refused
+    // and it drops the device itself.
+    await subscription?.unsubscribe();
+    if (subscription) enlist(subscription, false).catch(e => console.warn('status push:', e));
+  } else if (await Notification.requestPermission() === 'granted') {
+    try {
+      await enlist(await subscribed(registration) ?? await subscribe(registration), true);
       store.set('status', true);
+    } catch (e) {
+      console.warn('status push:', e);
+      pushFailed = true;
     }
-  } catch (e) {
-    console.warn('status push:', e);
-    pushFailed = true;
   }
   renderNotify();
   showStatus();
-});
-$('copy').addEventListener('click', async () => {
-  const registration = await navigator.serviceWorker.ready;
-  const subscription = await registration.pushManager.getSubscription()
-    ?? await registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: VAPID_PUBLIC_KEY});
-  await navigator.clipboard.writeText(JSON.stringify(subscription));
-  $('copy').textContent = 'Подписка скопирована';
 });
 // A mouse inspects while it hovers; a tap stays until the next tap elsewhere.
 $('dial').addEventListener('pointermove', probeAt);
@@ -580,6 +585,12 @@ load();
 setInterval(() => { render(); notifyIfDue(); showStatus(); }, 20e3);
 setInterval(load, REFRESH_MS);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+// A device that shows the status enlists again on every start, in case the worker has dropped it.
+if (statusOn()) {
+  navigator.serviceWorker.ready
+    .then(async registration => enlist(await subscribed(registration) ?? await subscribe(registration), true))
+    .catch(e => console.warn('status push:', e));
+}
 </script>
 </body>
 </html>

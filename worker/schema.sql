@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS subscriptions (
+  endpoint TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

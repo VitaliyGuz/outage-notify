@@ -1,0 +1,20 @@
+name = "outage-notify"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+# States change on the half-hour, so a nudge every five minutes lands right on each change.
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+# Pages allowed to register a device, comma-separated.
+ALLOWED_ORIGINS = "https://vitaliyguz.github.io"
+# The sender's contact for the push services.
+CONTACT = "https://vitaliyguz.github.io"
+# The public half of the key pair; the private half is the secret VAPID_PRIVATE_KEY.
+VAPID_PUBLIC_KEY = "BF5-2NY2Un22wD8YqqqAabhGnaqdK_Sk1XVRjV-ieRhI13UnxteOVpwOKYbF8JRmwVJLE3ifQpRU1EAxqDAsUQU"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "outage-notify"
+database_id = "682ea8e1-d868-4d68-b789-45d751a6f4e2"

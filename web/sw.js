@@ -54,8 +54,9 @@ async function schedule(prefs) {
   }
 }
 
-// A push is only a nudge: the sender's servers cannot reach the source, the phone can, so the worker
-// loads the schedule itself. Every push must end in a notification, so one is shown even without it.
+// A push is only a nudge and carries nothing: the sender's servers cannot reach the source, the
+// phone can, so the schedule is loaded here. Every push must end in a notification, so one is shown
+// even without a schedule.
 self.addEventListener('push', event => {
   event.waitUntil((async () => {
     const prefs = await caches.open(PREFS);
