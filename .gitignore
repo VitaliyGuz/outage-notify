@@ -1,0 +1,7 @@
+config.env
+state.json
+*.log
+.DS_Store
+__pycache__/
+com.vitalii.outage-notify.plist
+*.key

@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>График света</title>
+<meta name="description" content="График отключений электроэнергии по очередям, Полтавская область">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#edf2f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1a2b" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Свет">
+<style>
+  :root {
+    color-scheme: light dark;
+    --sky: #edf2f6; --ink: #14253b; --muted: #5a6c81; --line: #cdd8e2;
+    --power: #1f9d55; --now: #c97a06;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --sky: #0e1a2b; --ink: #f1ecdf; --muted: #8fa0b5; --line: #26384f;
+      --power: #4ccb7f; --now: #f2a93b;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--sky); color: var(--ink);
+    font: 1rem/1.4 ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-variant-numeric: tabular-nums;
+    -webkit-text-size-adjust: 100%;
+  }
+  main {
+    max-width: 26rem; margin: 0 auto;
+    padding: max(1rem, env(safe-area-inset-top)) max(1.25rem, env(safe-area-inset-right))
+             max(1.5rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
+  }
+  :focus-visible { outline: 2px solid var(--now); outline-offset: 3px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; color: var(--muted); }
+  header label { display: flex; align-items: center; gap: .5rem; }
+  select {
+    font: inherit; font-weight: 600; color: var(--ink);
+    background: transparent; border: 1px solid var(--line); border-radius: .5rem; padding: .25rem .4rem;
+  }
+
+  .status { margin-top: 1.5rem; text-align: center; }
+  h1 { font-size: clamp(2rem, 10vw, 2.6rem); line-height: 1.1; font-weight: 700; letter-spacing: -.02em; }
+  .status p { margin-top: .3rem; font-size: 1.15rem; }
+  #until { font-weight: 600; }
+  #left { color: var(--muted); }
+
+  .dial { position: relative; container-type: inline-size; max-width: 21rem; margin: .5rem auto 0; }
+  .dial svg { display: block; width: 100%; height: auto; }
+  #scale path { stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; }
+  #scale text { fill: var(--muted); font-size: 13px; text-anchor: middle; dominant-baseline: central; }
+  #ring path { fill: none; stroke-width: 26; }
+  #ring .on { stroke: var(--power); }
+  #ring .maybe { stroke: url(#hatch); }
+  #ring .past { opacity: .35; }
+  .hatch { fill: var(--power); }
+  #seam { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 2 3; }
+  #hand path { stroke: var(--now); stroke-width: 5; stroke-linecap: round; }
+  #hand circle { fill: var(--now); }
+  #mark { fill: none; stroke: var(--ink); stroke-width: 3; stroke-linecap: round; }
+  /* While a period is inspected the hand gives the centre to its description and stays as a nib at the ring. */
+  #hand .nib, .probing #hand .arm, .probing #hand circle { display: none; }
+  .probing #hand .nib { display: inline; }
+
+  .tip {
+    position: absolute; top: 50%; left: 50%; width: 50%; transform: translate(-50%, -50%);
+    text-align: center; text-wrap: balance; color: var(--muted); pointer-events: none;
+    font-size: .8rem; font-size: 3.9cqw; line-height: 1.3;
+  }
+  .tip strong { display: block; font-size: 1.55em; line-height: 1.15; color: var(--ink); }
+  .tip .range { font-size: 1.2em; font-weight: 600; color: var(--ink); }
+
+  .window { margin-top: .25rem; text-align: center; color: var(--muted); font-size: .9rem; }
+  .legend { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin-top: .9rem; }
+  .legend button {
+    display: flex; flex-direction: column; gap: .15rem; text-align: left;
+    padding: .55rem .7rem; border: 1px solid var(--line); border-radius: .75rem; background: none;
+  }
+  .legend [aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+  .legend small { color: var(--muted); font-size: .8rem; line-height: 1.25; text-wrap: balance; }
+  .legend b { display: flex; align-items: center; gap: .45rem; font-size: 1.15rem; font-weight: 600; }
+  .legend i { width: 1.1rem; height: .6rem; border-radius: 2px; background: var(--power); }
+  .legend .off { background: none; border: 1px solid var(--muted); }
+  .legend .maybe { background: repeating-linear-gradient(45deg, var(--power) 0 2px, transparent 2px 5px); }
+
+  section { margin-top: 1.75rem; }
+  h2 { font-size: 1rem; font-weight: 600; color: var(--muted); }
+  ol { list-style: none; padding: 0; margin-top: .25rem; }
+  li {
+    display: grid; grid-template-columns: 1fr auto; column-gap: 1rem;
+    padding: .55rem 0; border-bottom: 1px solid var(--line); font-size: 1.15rem;
+  }
+  li small { grid-column: 1 / -1; color: var(--muted); font-size: .85rem; font-weight: 400; }
+  li .dur { color: var(--muted); }
+  li.past { color: var(--muted); }
+  li.next { font-weight: 700; }
+  li.next .dur { color: inherit; }
+  .none { margin-top: .5rem; }
+
+  button { font: inherit; color: inherit; cursor: pointer; }
+  #notify, #status {
+    width: 100%; padding: .8rem 1rem; border: 0; border-radius: 999px;
+    background: var(--ink); color: var(--sky); font-weight: 600;
+  }
+  .switches p { margin-top: .6rem; color: var(--muted); font-size: .9rem; text-align: center; }
+  .switches p:empty { display: none; }
+  #status { margin-top: 1.25rem; }
+  #copy { display: block; margin: .6rem auto 0; font-size: .9rem; }
+  #copy, #refresh { background: none; border: 0; padding: 0; text-decoration: underline; text-underline-offset: 3px; }
+
+  footer {
+    margin-top: 1.75rem; display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem;
+    color: var(--muted); font-size: .85rem;
+  }
+  #refresh { white-space: nowrap; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <label>Очередь <select id="queue"></select></label>
+    <time id="day"></time>
+  </header>
+
+  <div class="status" aria-live="polite">
+    <h1 id="state">Загружаю график</h1>
+    <p><span id="until"></span> <span id="left"></span></p>
+  </div>
+
+  <div class="dial" id="dial">
+    <svg viewBox="0 0 360 360" aria-hidden="true">
+      <defs>
+        <pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect class="hatch" width="3" height="7"/>
+        </pattern>
+      </defs>
+      <g id="scale"></g>
+      <g id="ring"></g>
+      <path id="mark" hidden/>
+      <path id="seam" d="M180 31V84" hidden/>
+      <g id="hand" hidden>
+        <path class="arm" d="M180 192V70"/><circle cx="180" cy="180" r="6"/><path class="nib" d="M180 82V66"/>
+      </g>
+    </svg>
+    <div class="tip" id="tip" hidden>
+      <strong></strong>
+      <p class="range"></p>
+      <p></p>
+      <p></p>
+    </div>
+  </div>
+  <p class="window" id="window"></p>
+  <div class="legend" id="legend">
+    <button type="button" data-state="1"><b><i></i><span></span></b><small>со светом</small></button>
+    <button type="button" data-state="2"><b><i class="off"></i><span></span></b><small>без света</small></button>
+    <button type="button" data-state="3"><b><i class="maybe"></i><span></span></b><small>возможно без света</small></button>
+  </div>
+
+  <section id="today" hidden>
+    <h2></h2>
+    <ol></ol>
+  </section>
+  <section id="tomorrow" hidden>
+    <h2></h2>
+    <ol></ol>
+  </section>
+
+  <section class="switches">
+    <button id="notify" type="button" hidden></button>
+    <p id="notify-hint"></p>
+    <button id="status" type="button" hidden></button>
+    <p id="status-hint"></p>
+    <button id="copy" type="button" hidden>Скопировать подписку</button>
+  </section>
+
+  <footer>
+    <p id="source"></p>
+    <button id="refresh" type="button">Обновить</button>
+  </footer>
+</main>
+
+<script src="schedule.js"></script>
+<script>
+const SOURCE = 'https://www.poe.pl.ua/customs/dynamicgpv-info.php';
+// The public half of the key pair the status push is signed with; the status switch stays hidden without it.
+const VAPID_PUBLIC_KEY = 'BF5-2NY2Un22wD8YqqqAabhGnaqdK_Sk1XVRjV-ieRhI13UnxteOVpwOKYbF8JRmwVJLE3ifQpRU1EAxqDAsUQU';
+const WINDOW = 24, LEAD_MIN = 15, REFRESH_MS = 10 * 60e3;
+const MONTHS = ['січня', 'лютого', 'березня', 'квітня', 'травня', 'червня',
+                'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня'];
+const DATE_RE = new RegExp(`(\\d{1,2}) (${MONTHS.join('|')}) (\\d{4})`);
+const QUEUES = [1, 2, 3, 4, 5, 6].flatMap(q => [`${q}.1`, `${q}.2`]);
+
+const $ = id => document.getElementById(id);
+const mod = (n, m) => ((n % m) + m) % m;
+
+const store = {
+  get(key, fallback) {
+    try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch { return fallback; }
+  },
+  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} },
+};
+
+const dayLabel = new Intl.DateTimeFormat('ru', {timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long'});
+const timeLabel = new Intl.DateTimeFormat('ru', {timeZone: TZ, hour: '2-digit', minute: '2-digit'});
+
+// The source is parsed in an inert document and never inserted into the page.
+// Returns every queue's half-hours per day: {iso date: {queue: cells}}.
+function parseSchedule(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const days = {};
+  for (const block of doc.querySelectorAll('.gpvinfodetail')) {
+    const day = block.textContent.match(DATE_RE);
+    if (!day) continue;
+    const queues = {};
+    for (const row of block.querySelector('table')?.rows ?? []) {
+      const name = row.cells[0]?.textContent.trim();
+      if (!QUEUES.includes(name)) continue;
+      const cells = [...row.querySelectorAll('td.gpv-c')].map(td => td.className.match(/gpv-s([123])/)?.[1] ?? '').join('');
+      if (cells.length !== SLOTS) throw new Error(`queue ${name}: expected ${SLOTS} half-hours, got ${cells.length}`);
+      queues[name] = cells;
+    }
+    if (Object.keys(queues).length) days[`${day[3]}-${pad(MONTHS.indexOf(day[2]) + 1)}-${pad(day[1])}`] = queues;
+  }
+  const updated = doc.body.textContent.match(new RegExp(`Оновлено:\\s*${DATE_RE.source}\\s+(\\d{1,2}:\\d{2})`));
+  return {days, updated: updated && `${pad(updated[1])}.${pad(MONTHS.indexOf(updated[2]) + 1)} в ${updated[4]}`};
+}
+
+// Half-hour states on one axis counted from today's midnight (-48..-1 yesterday, 48..95 tomorrow);
+// undefined where no schedule is known.
+function timeline(days, today) {
+  const around = [-1, 0, 1].map(shift => days[shiftDate(today, shift)]);
+  return slot => around[Math.floor(slot / SLOTS) + 1]?.[mod(slot, SLOTS)];
+}
+
+// The 12-hour window opens at the last switch between power and outage (switching time belongs to
+// the outage); with no switch in the last 12 hours it opens at the current hour. A window that would
+// run into a tomorrow not published yet is the second half of today instead.
+function windowStart(at, minutes) {
+  const slot = Math.floor(minutes / 30);
+  const lit = at(slot) === ON;
+  let start = slot;
+  while (slot - start < WINDOW && at(start - 1) !== undefined && (at(start - 1) === ON) === lit) start--;
+  if (minutes - start * 30 >= WINDOW * 30) start = Math.floor(minutes / 60) * 2;
+  return at(start + WINDOW - 1) === undefined ? SLOTS - WINDOW : start;
+}
+
+// The stretch of the timeline around a slot that shares its state: lit (true), without guaranteed
+// power (false) or not published (undefined). An open side borders on a day with no schedule.
+function period(at, slot) {
+  const lit = s => at(s) && at(s) === ON;
+  let start = slot, end = slot + 1, firmEnd = null;
+  while (start > -SLOTS && lit(start - 1) === lit(slot)) start--;
+  while (end < 2 * SLOTS && lit(end) === lit(slot)) end++;
+  for (let s = start; s < end; s++) if (at(s) === OFF) firmEnd = s + 1;
+  return {start, end, firmEnd, lit: lit(slot), openStart: at(start - 1) === undefined, openEnd: at(end) === undefined};
+}
+
+// Title, time range, duration with the distance from now, and a note: the lines shown for an inspected period.
+function describe(p, minutes) {
+  if (p.lit === undefined) return ['Графика нет', 'на завтра', 'его ещё не опубликовали', ''];
+  // Midnight closes a day as 24:00 and opens the next as 00:00.
+  const stamp = (slot, closing) => {
+    const day = Math.floor((closing ? slot - 1 : slot) / SLOTS);
+    return {day: ['вчера ', '', 'завтра '][day + 1], time: hhmm(slot - day * SLOTS)};
+  };
+  const to = p.lit ? p.end : p.firmEnd ?? p.end;
+  const from = stamp(p.start), till = stamp(to, true), late = stamp(p.end, true);
+  const openEnd = p.openEnd && to === p.end;
+  const tense = minutes < p.start * 30 ? 2 : minutes < p.end * 30 ? 1 : 0;
+  const title = p.lit ? ['Свет был', 'Свет есть', 'Свет будет'][tense]
+    : p.firmEnd ? ['Света не было', 'Света нет', 'Света не будет'][tense] : 'Переключения';
+  const range = p.openStart && openEnd ? 'весь день' : p.openStart ? `${till.day}до ${till.time}`
+    : openEnd ? `${from.day}с ${from.time}`
+    : `${from.day}${from.time} – ${till.day === from.day ? '' : till.day}${till.time}`;
+  const until = minutes < to * 30 ? to : p.end;
+  const distance = tense === 2 ? `через ${span(p.start * 30 - minutes)}`
+    : tense === 0 ? `${span(minutes - to * 30)} назад`
+    : p.openEnd && until === p.end ? '' : `осталось ${span(until * 30 - minutes)}`;
+  const length = !p.openStart && !openEnd && span((to - p.start) * 30);
+  const note = p.lit ? (openEnd ? 'дальше графика пока нет' : '')
+    : !p.firmEnd ? 'возможно, без света'
+    : p.end > p.firmEnd ? `переключения до ${late.day}${late.time}` : '';
+  return [title, range, [length, distance].filter(Boolean).join(', '), note];
+}
+
+// The alert due right now, if an outage starts within LEAD_MIN.
+function dueAlert(days, now, queue) {
+  const tomorrow = shiftDate(now.date, 1);
+  for (const [iso, offset] of [[now.date, 0], [tomorrow, 24 * 60]]) {
+    for (const o of outages(days[iso] ?? '')) {
+      // An outage running over midnight was announced the day before.
+      if (iso === tomorrow && o.start === 0 && days[now.date]?.at(-1) !== ON) continue;
+      const wait = offset + o.start * 30 - now.minutes;
+      if (wait <= 0 || wait > LEAD_MIN) continue;
+      const tail = o.firmEnd && o.end > o.firmEnd ? ` Включение может задержаться до ${hhmm(o.end)}.` : '';
+      return {
+        key: `${queue} ${iso} ${hhmm(o.start)}`,
+        title: o.firmEnd ? `Через ${wait} мин отключение света` : `Через ${wait} мин возможно отключение света`,
+        body: `Очередь ${queue}: ${hhmm(o.start)}–${hhmm(o.firmEnd ?? o.end)}.${tail}`,
+      };
+    }
+  }
+  return null;
+}
+
+const NS = 'http://www.w3.org/2000/svg';
+const point = (deg, r) => [180 + r * Math.sin(deg * Math.PI / 180), 180 - r * Math.cos(deg * Math.PI / 180)].map(v => v.toFixed(2));
+const svg = (tag, attrs, parent) => {
+  const el = document.createElementNS(NS, tag);
+  for (const name in attrs) el.setAttribute(name, attrs[name]);
+  return parent.appendChild(el);
+};
+const segments = [];
+
+// A clock face, 12 on top: one segment per half-hour of the 12-hour window, drawn only where there is power.
+function buildDial() {
+  for (let h = 1; h <= 12; h++) {
+    svg('path', {d: `M${point(h * 30, 151)}L${point(h * 30, 156)}`}, $('scale'));
+    const [x, y] = point(h * 30, 169);
+    svg('text', {x, y}, $('scale')).textContent = h;
+  }
+  for (let i = 0; i < WINDOW; i++) {
+    segments.push(svg('path', {d: `M${point(i * 15 + 0.9, 132)}A132 132 0 0 1 ${point((i + 1) * 15 - 0.9, 132)}`}, $('ring')));
+  }
+}
+
+const LISTS = {
+  [ON]: {title: 'Со светом', none: 'Весь день без света.'},
+  [OFF]: {title: 'Без света', none: 'Отключений нет.'},
+  [MAYBE]: {title: 'Возможно без света', none: 'Переключений нет.'},
+};
+
+// The day's stretches of one state, under a heading that names the state and the day.
+function listPeriods(section, day, cells, slot, state) {
+  const periods = [];
+  for (let i = 0; i < cells.length; i++) {
+    if (cells[i] !== state) continue;
+    const start = i;
+    while (cells[i + 1] === state) i++;
+    periods.push({start, end: i + 1});
+  }
+  const active = periods.find(p => slot < p.end);
+  section.querySelector('h2').textContent = `${LISTS[state].title} ${day}`;
+  section.querySelector('ol').replaceChildren(...periods.map(p => {
+    const li = document.createElement('li');
+    li.className = slot >= p.end ? 'past' : p === active && slot >= 0 ? 'next' : '';
+    li.append(Object.assign(document.createElement('span'), {textContent: `${hhmm(p.start)} – ${hhmm(p.end)}`}),
+              Object.assign(document.createElement('span'), {className: 'dur', textContent: span((p.end - p.start) * 30)}));
+    let late = p.end;
+    while (state === OFF && cells[late] === MAYBE) late++;
+    if (late > p.end) li.append(Object.assign(document.createElement('small'), {textContent: `включение может задержаться до ${hhmm(late)}`}));
+    return li;
+  }));
+  if (!periods.length) {
+    section.querySelector('ol').append(Object.assign(document.createElement('li'), {className: 'none', textContent: LISTS[state].none}));
+  }
+}
+
+let queue = store.get('queue', '3.1');
+let shown = store.get('list', OFF);
+if (!LISTS[shown]) shown = OFF;
+let data = store.get('schedule', null);
+let loading = false;
+let failed = false;
+let probe = null;
+// A copy saved when only one queue was kept has a different shape and cannot be reused.
+if (data?.queue) data = null;
+
+// The cached copy holds every queue; this is the selected one's days.
+const queueDays = () => daysOf(data?.days ?? {}, queue);
+
+// probe is the clock position under the pointer (or last tapped); the whole period it falls in is
+// bracketed outside the ring and described in the centre.
+function renderProbe(at, start, now) {
+  const slot = probe === null ? null : start + mod(probe - start, WINDOW);
+  const p = slot === null ? null : period(at, slot);
+  $('dial').classList.toggle('probing', !!p);
+  $('tip').hidden = !p;
+  $('mark').toggleAttribute('hidden', !p);
+  if (!p) return;
+  const from = Math.max(p.start, start), to = Math.min(p.end, start + WINDOW);
+  $('mark').setAttribute('d', `M${point(from * 15 + 0.9, 148)}A148 148 0 ${(to - from) * 15 > 180 ? 1 : 0} 1 ${point(to * 15 - 0.9, 148)}`);
+  describe(p, now.minutes).forEach((text, i) => {
+    const line = $('tip').children[i];
+    line.textContent = text;
+    line.hidden = !text;
+  });
+}
+
+// The legend doubles as today's totals (hours with power, without, and possibly without) and as the
+// switch for which of the three the lists below show.
+function renderTotals(cells) {
+  for (const card of $('legend').children) {
+    const slots = cells ? cells.split(card.dataset.state).length - 1 : null;
+    card.querySelector('span').textContent = cells ? `${String(slots / 2).replace('.', ',')} ч` : '';
+    card.setAttribute('aria-pressed', card.dataset.state === shown);
+  }
+}
+
+function probeAt(event) {
+  const box = $('dial').getBoundingClientRect();
+  const x = (event.clientX - box.left) / box.width - .5, y = (event.clientY - box.top) / box.height - .5;
+  const r = Math.hypot(x, y) * 360;
+  setProbe(r < 105 || r > 160 ? null : Math.floor(mod(Math.atan2(x, -y) * 180 / Math.PI, 360) / 15));
+}
+function setProbe(position) {
+  if (position === probe) return;
+  probe = position;
+  render();
+}
+
+function render() {
+  const now = kyivNow();
+  const days = queueDays();
+  const cells = days[now.date];
+  const slot = Math.floor(now.minutes / 30);
+  $('day').textContent = dayLabel.format(new Date());
+
+  const at = timeline(days, now.date);
+  const start = cells ? windowStart(at, now.minutes) : 0;
+  segments.forEach((seg, position) => {
+    // Each clock position holds the one half-hour of the window that falls on it.
+    const s = start + mod(position - start, WINDOW);
+    const cell = cells && at(s);
+    const kind = cell === ON ? 'on' : cell === MAYBE ? 'maybe' : '';
+    seg.setAttribute('class', kind && s < slot ? `${kind} past` : kind);
+  });
+  $('seam').toggleAttribute('hidden', !cells);
+  $('seam').setAttribute('transform', `rotate(${start * 15} 180 180)`);
+  $('hand').toggleAttribute('hidden', !cells);
+  $('hand').setAttribute('transform', `rotate(${now.minutes / 2} 180 180)`);
+  $('window').textContent = cells ? `с ${hhmm(mod(start, SLOTS))} до ${hhmm(mod(start + WINDOW - 1, SLOTS) + 1)}` : '';
+  if (!cells) probe = null;
+  renderProbe(at, start, now);
+  renderTotals(cells);
+
+  const [state, until, left] = cells ? status(cells, now.minutes)
+    : loading ? ['Загружаю график', '', '']
+    : !data ? ['График не загрузился', 'Проверьте интернет', 'и нажмите «Обновить»']
+    : ['Графика на сегодня нет', failed ? 'нет связи с источником' : 'источник его не публикует', ''];
+  $('state').textContent = state;
+  $('until').textContent = until;
+  $('left').textContent = left;
+
+  $('today').hidden = !cells;
+  if (cells) listPeriods($('today'), 'сегодня', cells, slot, shown);
+  const tomorrow = days[shiftDate(now.date, 1)];
+  $('tomorrow').hidden = !tomorrow;
+  if (tomorrow) listPeriods($('tomorrow'), 'завтра', tomorrow, -1, shown);
+
+  $('source').textContent = !data ? ''
+    : (loading ? 'Обновляю… ' : failed ? 'Нет связи с источником. ' : '')
+      + (data.updated ? `Полтаваоблэнерго обновил график ${data.updated}. ` : 'Источник: Полтаваоблэнерго. ')
+      + `Загружен в ${timeLabel.format(data.fetchedAt)}.`;
+}
+
+// The cached copy stays on screen while the request runs and is replaced only by a good answer.
+async function load() {
+  if (loading) return;
+  loading = true;
+  render();
+  try {
+    const res = await fetch(SOURCE, {cache: 'no-store'});
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const fresh = parseSchedule(await res.text());
+    // Yesterday is kept so a state that began before midnight still has its start.
+    const yesterday = shiftDate(kyivNow().date, -1);
+    const kept = data?.days[yesterday] ? {[yesterday]: data.days[yesterday]} : {};
+    data = {days: {...kept, ...fresh.days}, updated: fresh.updated, fetchedAt: Date.now()};
+    store.set('schedule', data);
+    failed = false;
+  } catch (e) {
+    console.warn('schedule not loaded:', e);
+    failed = true;
+  }
+  loading = false;
+  render();
+  notifyIfDue();
+  showStatus();
+}
+
+const canNotify = 'Notification' in window && 'serviceWorker' in navigator;
+const isIos = /iPhone|iPad|iPod/.test(navigator.userAgent);
+const notifyOn = () => canNotify && Notification.permission === 'granted' && store.get('notify', false);
+const canPush = canNotify && 'PushManager' in window && !!VAPID_PUBLIC_KEY;
+const statusOn = () => canPush && Notification.permission === 'granted' && store.get('status', false);
+let pushFailed = false;
+let statusShown = '';
+
+function renderNotify() {
+  const blocked = canNotify && Notification.permission === 'denied';
+  $('notify').hidden = !canNotify || blocked;
+  $('notify').textContent = notifyOn() ? 'Выключить уведомления' : 'Включить уведомления';
+  $('notify-hint').textContent =
+    blocked ? 'Уведомления запрещены. Разрешите их для этого сайта в настройках браузера.'
+    : canNotify ? `Напомним за ${LEAD_MIN} минут до отключения, пока приложение открыто.`
+    : isIos ? 'На iPhone сначала добавьте страницу на экран «Домой», потом включите уведомления здесь.'
+    : 'Этот браузер не показывает уведомления.';
+
+  $('status').hidden = !canPush || blocked;
+  $('status').textContent = statusOn() ? 'Убрать статус из шторки' : 'Показывать статус в шторке';
+  $('status-hint').textContent = !canPush || blocked ? ''
+    : pushFailed ? 'Не получилось подписаться на обновления. Проверьте интернет и попробуйте ещё раз.'
+    : statusOn() ? 'Чтобы статус обновлялся и при закрытом приложении, скопируйте подписку и добавьте её '
+                   + 'в секрет PUSH_SUBSCRIPTIONS репозитория.'
+    : 'Постоянное уведомление: есть ли свет и до скольки.';
+  $('copy').hidden = !statusOn();
+}
+
+// The status notification is replaced only when its text changes, so one swiped away stays away
+// until then (or until the next push).
+async function showStatus() {
+  if (!statusOn() || !data) return;
+  const notice = statusNotice(queueDays(), kyivNow());
+  const text = `${queue} ${notice.title} ${notice.body}`;
+  if (text === statusShown) return;
+  statusShown = text;
+  const registration = await navigator.serviceWorker.ready;
+  await registration.showNotification(notice.title, statusOptions(notice));
+}
+
+const shareQueue = () => 'caches' in window
+  && caches.open(PREFS).then(cache => cache.put('queue', new Response(queue))).catch(() => {});
+
+async function notifyIfDue() {
+  if (!notifyOn() || !data) return;
+  const alert = dueAlert(queueDays(), kyivNow(), queue);
+  if (!alert || store.get('notified') === alert.key) return;
+  const registration = await navigator.serviceWorker.ready;
+  await registration.showNotification(alert.title, {body: alert.body, tag: alert.key, icon: 'icon-192.png'});
+  store.set('notified', alert.key);
+}
+
+$('notify').addEventListener('click', async () => {
+  if (notifyOn()) store.set('notify', false);
+  else if (await Notification.requestPermission() === 'granted') store.set('notify', true);
+  renderNotify();
+  notifyIfDue();
+});
+$('status').addEventListener('click', async () => {
+  const registration = await navigator.serviceWorker.ready;
+  pushFailed = false;
+  try {
+    if (statusOn()) {
+      store.set('status', false);
+      statusShown = '';
+      await (await registration.pushManager.getSubscription())?.unsubscribe();
+      for (const posted of await registration.getNotifications({tag: 'status'})) posted.close();
+    } else if (await Notification.requestPermission() === 'granted') {
+      await registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: VAPID_PUBLIC_KEY});
+      store.set('status', true);
+    }
+  } catch (e) {
+    console.warn('status push:', e);
+    pushFailed = true;
+  }
+  renderNotify();
+  showStatus();
+});
+$('copy').addEventListener('click', async () => {
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription()
+    ?? await registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: VAPID_PUBLIC_KEY});
+  await navigator.clipboard.writeText(JSON.stringify(subscription));
+  $('copy').textContent = 'Подписка скопирована';
+});
+// A mouse inspects while it hovers; a tap stays until the next tap elsewhere.
+$('dial').addEventListener('pointermove', probeAt);
+$('dial').addEventListener('pointerdown', probeAt);
+$('dial').addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') setProbe(null); });
+document.addEventListener('pointerdown', e => { if (!$('dial').contains(e.target)) setProbe(null); });
+$('legend').addEventListener('click', e => {
+  const card = e.target.closest('button');
+  if (!card) return;
+  shown = card.dataset.state;
+  store.set('list', shown);
+  render();
+});
+$('refresh').addEventListener('click', load);
+$('queue').addEventListener('change', e => {
+  queue = e.target.value;
+  store.set('queue', queue);
+  shareQueue();
+  render();
+  notifyIfDue();
+  showStatus();
+  if (!data || failed) load();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') load();
+});
+
+for (const q of QUEUES) $('queue').add(new Option(q, q, false, q === queue));
+buildDial();
+renderNotify();
+shareQueue();
+load();
+setInterval(() => { render(); notifyIfDue(); showStatus(); }, 20e3);
+setInterval(load, REFRESH_MS);
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
