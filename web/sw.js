@@ -1,6 +1,6 @@
 importScripts('schedule.js');
 
-const CACHE = 'svet-v2';
+const CACHE = 'svet-v3';
 const SHELL = ['./', 'schedule.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png',
                ...Object.values(NAMES).flatMap(state => [`status-${state}.png`, `badge-${state}.png`])];
 const MAX_AGE_MS = 15 * 60e3;
@@ -18,12 +18,13 @@ self.addEventListener('activate', event => {
 
 // App shell only; cross-origin requests, the schedule among them, are not touched. Network first so
 // a redeploy shows up whole, the cached copy when offline. (Answering from the cache whenever the
-// network is merely slow would mix a new page with an old schedule.js after a deploy.)
+// network is merely slow would mix a new page with an old schedule.js after a deploy; so would the
+// browser's own cache, which is why every file is checked with the server.)
 self.addEventListener('fetch', event => {
   const request = event.request;
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
   event.respondWith(
-    fetch(request)
+    fetch(request, {cache: 'no-cache'})
       .then(response => {
         if (response.ok) {
           const copy = response.clone();

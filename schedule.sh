@@ -36,21 +36,22 @@ queue_slots() {
       }'
 }
 
-# Reads queue_slots output on stdin. An outage is a run of non-"on" slots: "to" is the end of its
-# last "off" slot, "may_last_until" the end of the "maybe" slots trailing it.
+# Reads queue_slots output on stdin. An outage is a run of "off" slots; "may_last_until" is the end
+# of the "maybe" slots right after it, which otherwise count as power.
 render_json() {
   awk -v queue="$1" -v day="$2" -v src="$SOURCE_URL" '
     { from[NR] = $1; to[NR] = $2; status[NR] = $3 }
     END {
       n = 0
       for (i = 1; i <= NR; i++) {
-        if (status[i] == "on") continue
-        start = i; firm = 0
-        for (; i <= NR && status[i] != "on"; i++) if (status[i] == "off") firm = i
-        last = i - 1
-        tail = (firm && last > firm) ? "\"" to[last] "\"" : "null"
-        outage[++n] = sprintf("{\"from\": \"%s\", \"to\": \"%s\", \"may_last_until\": %s, \"certain\": %s}",
-                              from[start], to[firm ? firm : last], tail, firm ? "true" : "false")
+        if (status[i] != "off") continue
+        start = i
+        while (i < NR && status[i + 1] == "off") i++
+        last = i
+        while (last < NR && status[last + 1] == "maybe") last++
+        tail = (last > i) ? "\"" to[last] "\"" : "null"
+        outage[++n] = sprintf("{\"from\": \"%s\", \"to\": \"%s\", \"may_last_until\": %s}", from[start], to[i], tail)
+        i = last
       }
       printf "{\n  \"queue\": \"%s\",\n  \"date\": \"%s\",\n  \"source\": \"%s\",\n", queue, day, src
       printf "  \"outages\": [\n"

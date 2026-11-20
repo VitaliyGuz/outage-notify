@@ -185,7 +185,7 @@
   .tip .range { font-size: 1.15em; font-weight: 600; color: var(--ink); }
 
   .window { margin-top: .7rem; text-align: center; color: var(--muted); font-size: .9rem; }
-  .legend { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin-top: .9rem; }
+  .legend { display: grid; grid-template-columns: repeat(2, 1fr); gap: .5rem; margin-top: .9rem; }
   .legend button {
     display: flex; flex-direction: column; gap: .15rem; text-align: left;
     padding: .55rem .7rem; border: 1px solid var(--line); border-radius: .75rem; background: none;
@@ -195,7 +195,6 @@
   .legend b { display: flex; align-items: center; gap: .45rem; font-size: 1.15rem; font-weight: 600; }
   .legend i { width: 1.1rem; height: .6rem; border-radius: 2px; background: var(--ink); }
   .legend .off { background: none; border: 1px solid var(--muted); }
-  .legend .maybe { background: repeating-linear-gradient(45deg, var(--ink) 0 2px, transparent 2px 5px); }
 
   section { margin-top: 1.75rem; }
   h2 { font-size: 1rem; font-weight: 600; color: var(--muted); }
@@ -345,7 +344,6 @@
   <div class="legend" id="legend">
     <button type="button" data-state="1"><b><i></i><span></span></b><small>со светом</small></button>
     <button type="button" data-state="2"><b><i class="off"></i><span></span></b><small>без света</small></button>
-    <button type="button" data-state="3"><b><i class="maybe"></i><span></span></b><small>возможно без света</small></button>
   </div>
 
   <section id="today" hidden>
@@ -404,13 +402,13 @@ function timeline(days, today) {
   return slot => around[Math.floor(slot / SLOTS) + 1]?.[mod(slot, SLOTS)];
 }
 
-// The 12-hour window opens at the last switch between power and outage (switching time belongs to
-// the outage); with no switch in the last 12 hours it opens at the current hour. A window that would
-// run into a tomorrow not published yet is the second half of today instead.
+// The 12-hour window opens at the last switch between power and outage; with no switch in the last
+// 12 hours it opens at the current hour. A window that would run into a tomorrow not published yet
+// is the second half of today instead.
 function windowStart(at, slot) {
-  const lit = at(slot) === ON;
+  const on = lit(at(slot));
   let start = slot;
-  while (slot - start < WINDOW && at(start - 1) !== undefined && (at(start - 1) === ON) === lit) start--;
+  while (slot - start < WINDOW && at(start - 1) !== undefined && lit(at(start - 1)) === on) start--;
   if (slot - start >= WINDOW) start = slot - slot % 2;
   return at(start + WINDOW - 1) === undefined ? SLOTS - WINDOW : start;
 }
@@ -440,45 +438,37 @@ function windowWords(start) {
   };
 }
 
-// The stretch of the timeline around a published slot that shares its state: lit or without
-// guaranteed power. An open side borders on a day with no schedule.
+// The stretch of the timeline around a published slot that shares its state: power, the switching
+// half-hours counted with it, or none. late closes the switching half-hours that follow an outage:
+// they come after the outage's end and open the power after it. An open side borders on a day
+// with no schedule.
 function period(at, slot) {
-  const lit = s => at(s) && at(s) === ON;
-  let start = slot, end = slot + 1, firmEnd = null;
-  while (lit(start - 1) === lit(slot)) start--;
-  while (lit(end) === lit(slot)) end++;
-  for (let s = start; s < end; s++) if (at(s) === OFF) firmEnd = s + 1;
-  return {start, end, firmEnd, lit: lit(slot), openStart: at(start - 1) === undefined, openEnd: at(end) === undefined};
+  const on = s => at(s) && lit(at(s));
+  let start = slot, end = slot + 1;
+  while (on(start - 1) === on(slot)) start--;
+  while (on(end) === on(slot)) end++;
+  const edge = on(slot) ? start : end;
+  let late = edge;
+  while (at(late) === MAYBE) late++;
+  return {start, end, late, delayed: late > edge, lit: on(slot),
+          openStart: at(start - 1) === undefined, openEnd: at(end) === undefined};
 }
 
 // Title, time range, duration with the distance from now, and a note: the lines shown for an inspected period.
 function describe(p, minutes) {
-  const to = p.lit ? p.end : p.firmEnd ?? p.end;
-  const from = stamp(p.start), till = stamp(to, true), late = stamp(p.end, true);
-  const openEnd = p.openEnd && to === p.end;
+  const from = stamp(p.start), till = stamp(p.end, true), late = stamp(p.late, true);
   const tense = minutes < p.start * 30 ? 2 : minutes < p.end * 30 ? 1 : 0;
-  const title = p.lit ? ['Свет был', 'Свет есть', 'Свет будет'][tense]
-    : p.firmEnd !== null ? ['Света не было', 'Света нет', 'Света не будет'][tense] : 'Переключения';
-  const range = p.openStart && openEnd ? 'весь день' : p.openStart ? `${till.day}до ${till.time}`
-    : openEnd ? `${from.day}с ${from.time}`
+  const title = (p.lit ? ['Свет был', 'Свет есть', 'Свет будет'] : ['Света не было', 'Света нет', 'Света не будет'])[tense];
+  const range = p.openStart && p.openEnd ? 'весь день' : p.openStart ? `${till.day}до ${till.time}`
+    : p.openEnd ? `${from.day}с ${from.time}`
     : `${from.day}${from.time} – ${till.day === from.day ? '' : till.day}${till.time}`;
-  const until = minutes < to * 30 ? to : p.end;
   const distance = tense === 2 ? `через ${span(p.start * 30 - minutes)}`
-    : tense === 0 ? `${span(minutes - to * 30)} назад`
-    : p.openEnd && until === p.end ? '' : `осталось ${span(until * 30 - minutes)}`;
-  const length = !p.openStart && !openEnd && span((to - p.start) * 30);
-  const note = p.lit ? (openEnd ? 'дальше графика пока нет' : '')
-    : p.firmEnd === null ? 'возможно, без света'
-    : p.end > p.firmEnd ? `переключения до ${late.day}${late.time}` : '';
+    : tense === 0 ? `${span(minutes - p.end * 30)} назад`
+    : p.openEnd ? '' : `осталось ${span(p.end * 30 - minutes)}`;
+  const length = !p.openStart && !p.openEnd && span((p.end - p.start) * 30);
+  const note = p.delayed ? `включение может задержаться до ${late.day}${late.time}`
+    : p.openEnd ? 'дальше графика пока нет' : '';
   return [title, range, [length, distance].filter(Boolean).join(', '), note];
-}
-
-// Minutes left of what holds now: an outage counts down to the end of its last firm half-hour while
-// that is ahead, then to the end of the switching time after it. null where the schedule runs out first.
-function countdown(at, minutes) {
-  const p = period(at, Math.floor(minutes / 30));
-  const firm = p.firmEnd !== null && minutes < p.firmEnd * 30;
-  return !firm && p.openEnd ? null : (firm ? p.firmEnd : p.end) * 30 - minutes;
 }
 
 // The alert due right now, if an outage starts within LEAD_MIN.
@@ -487,15 +477,14 @@ function dueAlert(days, now, queue) {
   for (const [iso, offset] of [[now.date, 0], [tomorrow, 24 * 60]]) {
     for (const o of outages(days[iso] ?? '')) {
       // An outage running over midnight was announced the day before, if that day's schedule is known.
-      const last = days[now.date]?.at(-1);
-      if (iso === tomorrow && o.start === 0 && last && last !== ON) continue;
+      if (iso === tomorrow && o.start === 0 && days[now.date]?.at(-1) === OFF) continue;
       const wait = offset + o.start * 30 - now.minutes;
       if (wait <= 0 || wait > LEAD_MIN) continue;
-      const tail = o.firmEnd && o.end > o.firmEnd ? ` Включение может задержаться до ${hhmm(o.end)}.` : '';
+      const tail = o.late > o.end ? ` Включение может задержаться до ${hhmm(o.late)}.` : '';
       return {
         key: `${queue} ${iso} ${hhmm(o.start)}`,
-        title: o.firmEnd ? `Через ${wait} мин отключение света` : `Через ${wait} мин возможно отключение света`,
-        body: `Очередь ${queue}: ${hhmm(o.start)}–${hhmm(o.firmEnd ?? o.end)}.${tail}`,
+        title: `Через ${wait} мин отключение света`,
+        body: `Очередь ${queue}: ${hhmm(o.start)}–${hhmm(o.end)}.${tail}`,
       };
     }
   }
@@ -581,16 +570,16 @@ const setBezel = turn => { for (const part of turning) part.style.transform = `r
 const LISTS = {
   [ON]: {title: 'Со светом', none: 'Весь день без света.'},
   [OFF]: {title: 'Без света', none: 'Отключений нет.'},
-  [MAYBE]: {title: 'Возможно без света', none: 'Переключений нет.'},
 };
 
-// A day's stretches of one state.
+// A day's stretches of power (the switching half-hours counted with it) or of none.
 function runs(cells, state) {
+  const same = cell => cell !== undefined && lit(cell) === (state === ON);
   const periods = [];
   for (let i = 0; i < cells.length; i++) {
-    if (cells[i] !== state) continue;
+    if (!same(cells[i])) continue;
     const start = i;
-    while (cells[i + 1] === state) i++;
+    while (same(cells[i + 1])) i++;
     periods.push({start, end: i + 1});
   }
   return periods;
@@ -606,9 +595,11 @@ function listPeriods(section, day, cells, slot, state) {
     const li = el('li', {className: slot >= p.end ? 'past' : p === active && slot >= 0 ? 'next' : ''});
     li.append(el('span', {textContent: `${hhmm(p.start)} – ${hhmm(p.end)}`}),
               el('span', {className: 'dur', textContent: span((p.end - p.start) * 30)}));
-    let late = p.end;
-    while (state === OFF && cells[late] === MAYBE) late++;
-    if (late > p.end) li.append(el('small', {textContent: `включение может задержаться до ${hhmm(late)}`}));
+    // The switching half-hours come after an outage's end and open the power after it.
+    const edge = state === OFF ? p.end : p.start;
+    let late = edge;
+    while (cells[late] === MAYBE) late++;
+    if (late > edge) li.append(el('small', {textContent: `включение может задержаться до ${hhmm(late)}`}));
     return li;
   }));
   if (!periods.length) list.append(el('li', {className: 'none', textContent: LISTS[state].none}));
@@ -661,19 +652,14 @@ function renderProbe() {
   });
 }
 
-// How long until the power is back: until it may come on, when the outage's last firm half-hour is
-// over, and until it is on for certain, when the switching time after that is over too. With the
-// power on there is nothing to wait for, and the lines describe what holds now.
+// How long until the power is back, as the lines shown over the face. With the power on there is
+// nothing to wait for, and the lines describe what holds now, less the note on a delayed return.
 function returnLines(at, minutes) {
   const p = period(at, Math.floor(minutes / 30));
-  if (p.lit) return describe(p, minutes);
-  const when = slot => { const {day, time} = stamp(slot, true); return `${day}в ${time}`; };
-  const may = (p.firmEnd ?? p.start) * 30 - minutes, sure = `полностью через ${span(p.end * 30 - minutes)}`;
-  const beyond = 'дальше графика пока нет';
-  if (may <= 0) return ['Включение', 'возможно уже сейчас', p.openEnd ? beyond : sure, p.openEnd ? '' : when(p.end)];
-  if (p.firmEnd === p.end) return ['Включение', `через ${span(may)}`, when(p.end), p.openEnd ? beyond : ''];
-  return ['Включение', `возможно через ${span(may)}`, p.openEnd ? beyond : sure,
-          p.openEnd ? when(p.firmEnd) : `${when(p.firmEnd)} и ${when(p.end)}`];
+  if (p.lit) return describe(p, minutes).slice(0, 3);
+  const {day, time} = stamp(p.end, true), left = span(p.end * 30 - minutes);
+  return ['Включение', p.openEnd ? `не раньше чем через ${left}` : `через ${left}`, `${day}в ${time}`,
+          p.openEnd ? 'дальше графика пока нет' : ''];
 }
 
 // Today's figures for one state: how long it holds in all, what share of the day that is, in how
@@ -693,11 +679,11 @@ function tallyLines(state) {
   ];
 }
 
-// The legend doubles as today's totals (hours with power, without, and possibly without) and as the
-// switch for which of the three the lists below show. Two of the watch's small dials carry the
-// same totals for power and for none, and switch the lists as well.
+// The legend doubles as today's totals (hours with power and without) and as the switch for which
+// of the two the lists below show. Two of the watch's small dials carry the same totals and switch
+// the lists as well.
 function renderTotals(cells) {
-  const hours = state => cells ? (cells.split(state).length - 1) / 2 : 0;
+  const hours = state => cells ? runs(cells, state).reduce((sum, p) => sum + p.end - p.start, 0) / 2 : 0;
   const words = state => cells ? `${hours(state).toLocaleString('ru')} ч` : '';
   for (const card of $('legend').children) {
     card.querySelector('span').textContent = words(card.dataset.state);
@@ -759,7 +745,8 @@ function renderDial(now, days) {
   $('date').textContent = `${today.weekday.toUpperCase()} ${today.day}`;
   // The top small dial reads the time left until the power is back, once round in four hours;
   // anything longer leaves its needle there, and with the power on it rests at the top.
-  const left = view && view.at(slot) !== ON && countdown(view.at, now.minutes) || 0;
+  const here = view && period(view.at, slot);
+  const left = here && !here.lit ? here.end * 30 - now.minutes : 0;
   $('count').querySelector('.needle').setAttribute('transform', `rotate(${Math.min(left, 240) * 1.5})`);
   const label = view ? windowWords(start).label : '';
   $('window').textContent = label;

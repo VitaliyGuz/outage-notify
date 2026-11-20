@@ -76,44 +76,49 @@ function daysOf(days, queue) {
   return Object.fromEntries(Object.entries(days).flatMap(([iso, queues]) => queues[queue] ? [[iso, queues[queue]]] : []));
 }
 
-// Runs of half-hours without guaranteed power: firmEnd closes the last OFF slot, end the MAYBE slots after it.
+// The switching half-hours that follow an outage count as power: as a rule it is back by then.
+const lit = cell => cell === ON || cell === MAYBE;
+
+// Runs of half-hours without power; late closes the switching half-hours right after a run, while
+// the power may still be on its way back.
 function outages(cells) {
   const runs = [];
   for (let i = 0; i < cells.length; i++) {
-    if (cells[i] === ON) continue;
+    if (cells[i] !== OFF) continue;
     const start = i;
-    let firmEnd = null;
-    for (; i < cells.length && cells[i] !== ON; i++) if (cells[i] === OFF) firmEnd = i + 1;
-    runs.push({start, firmEnd, end: i});
+    while (cells[i + 1] === OFF) i++;
+    let late = i + 1;
+    while (cells[late] === MAYBE) late++;
+    runs.push({start, end: i + 1, late});
   }
   return runs;
 }
 
-// What holds at the given minute and the half-hour it lasts until; an outage lasts until its last OFF slot.
+// What holds at the given minute, power (ON) or none (OFF), and the half-hour it lasts until.
 function current(cells, minutes) {
-  const slot = Math.floor(minutes / 30);
-  if (cells[slot] === OFF) return {state: OFF, end: outages(cells).find(o => o.start <= slot && slot < o.end).firmEnd};
+  const slot = Math.floor(minutes / 30), on = lit(cells[slot]);
   let end = slot;
-  while (end < SLOTS && cells[end] === cells[slot]) end++;
-  return {state: cells[slot], end};
+  while (end < SLOTS && lit(cells[end]) === on) end++;
+  return {state: on ? ON : OFF, end};
 }
 
 function status(cells, minutes) {
   const {state, end} = current(cells, minutes);
-  const title = {[ON]: 'Свет есть', [OFF]: 'Света нет', [MAYBE]: 'Переключения'}[state];
+  const title = state === ON ? 'Свет есть' : 'Света нет';
   if (state === ON && end === SLOTS) return [title, 'до конца суток', ''];
   return [title, `до ${hhmm(end)}`, `ещё ${span(end * 30 - minutes)}`];
 }
 
-// The status as a notification: what holds now and what follows it. The state names its icons.
+// The status as a notification: what holds now and what follows it. The state names its icons; the
+// half-lit one stands for a day with no schedule.
 function statusNotice(days, now) {
   const cells = days[now.date];
-  if (!cells) return {state: 'maybe', title: 'Графика на сегодня нет', body: ''};
+  if (!cells) return {state: NAMES[MAYBE], title: 'Графика на сегодня нет', body: ''};
   const {state, end} = current(cells, now.minutes);
   const [title, until] = status(cells, now.minutes);
   const later = end < SLOTS ? cells : days[shiftDate(now.date, 1)];
   const minute = end % SLOTS * 30;
-  const next = later && {[ON]: 'свет', [OFF]: 'без света', [MAYBE]: 'переключения'}[current(later, minute).state];
+  const next = later && (current(later, minute).state === ON ? 'свет' : 'без света');
   return {
     state: NAMES[state],
     title: `${title} ${until}`,

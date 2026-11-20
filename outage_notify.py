@@ -38,7 +38,8 @@ MONTHS = ["січня", "лютого", "березня", "квітня", "тр�
           "липня", "серпня", "вересня", "жовтня", "листопада", "грудня"]
 DATE_RE = re.compile(r"(\d{1,2}) (%s) (\d{4}) року" % "|".join(MONTHS))
 
-# Half-hour cell states, as the source colours them: on / off / switching time (power may be absent).
+# Half-hour cell states, as the source colours them: on / off / switching time after an outage,
+# when the power is as a rule back already; it counts as on.
 ON, OFF, MAYBE = "1", "2", "3"
 CELLS = 48
 
@@ -102,17 +103,20 @@ def parse_schedule(html, queue):
 
 
 def outages(cells):
-    """Runs of non-ON half-hours as (start, end of the last firm OFF cell or None, end) cell indexes."""
+    """Runs of OFF half-hours as (start, end, late) cell indexes; late closes the switching half-hours
+    right after a run, while the power may still be on its way back."""
     runs, i = [], 0
     while i < len(cells):
-        if cells[i] == ON:
+        if cells[i] != OFF:
             i += 1
             continue
         j = i
-        while j < len(cells) and cells[j] != ON:
+        while j < len(cells) and cells[j] == OFF:
             j += 1
-        firm_end = max((k + 1 for k in range(i, j) if cells[k] == OFF), default=None)
-        runs.append((i, firm_end, j))
+        late = j
+        while late < len(cells) and cells[late] == MAYBE:
+            late += 1
+        runs.append((i, j, late))
         i = j
     return runs
 
@@ -126,21 +130,17 @@ def due(days, queue, now, lead):
     for iso, cells in sorted(days.items()):
         d = date.fromisoformat(iso)
         previous = days.get((d - timedelta(days=1)).isoformat())
-        for start, firm_end, end in outages(cells):
+        for start, end, late in outages(cells):
             # An outage running over midnight is the previous day's, already announced.
-            if start == 0 and previous and previous[-1] != ON:
+            if start == 0 and previous and previous[-1] == OFF:
                 continue
             starts_at = datetime(d.year, d.month, d.day, start // 2, start % 2 * 30, tzinfo=KYIV)
             if not starts_at - lead <= now < starts_at:
                 continue
             minutes = math.ceil((starts_at - now).total_seconds() / 60)
-            if firm_end is None:
-                text = (f"⚠️ Очередь {queue}: через {minutes} мин возможно отключение света, "
-                        f"{hhmm(start)}–{hhmm(end)} (время переключений).")
-            else:
-                text = f"⚡ Очередь {queue}: через {minutes} мин отключение света, {hhmm(start)}–{hhmm(firm_end)}."
-                if end > firm_end:
-                    text += f" Включение может задержаться до {hhmm(end)}."
+            text = f"⚡ Очередь {queue}: через {minutes} мин отключение света, {hhmm(start)}–{hhmm(end)}."
+            if late > end:
+                text += f" Включение может задержаться до {hhmm(late)}."
             yield f"{iso}T{hhmm(start)}", text
 
 
@@ -211,12 +211,9 @@ def run(cfg, now=None, deliver=send):
 def show(cfg):
     for iso, cells in sorted(parse_schedule(fetch(), cfg["QUEUE"]).items()):
         print(f"{iso}  queue {cfg['QUEUE']}  {cells}")
-        for start, firm_end, end in outages(cells):
-            if firm_end is None:
-                print(f"  {hhmm(start)}-{hhmm(end)}  possible (switching time)")
-            else:
-                tail = f"  (may last until {hhmm(end)})" if end > firm_end else ""
-                print(f"  {hhmm(start)}-{hhmm(firm_end)}  off{tail}")
+        for start, end, late in outages(cells):
+            tail = f"  (may last until {hhmm(late)})" if late > end else ""
+            print(f"  {hhmm(start)}-{hhmm(end)}  off{tail}")
 
 
 def as_json(cfg):
@@ -225,11 +222,8 @@ def as_json(cfg):
     for iso, cells in sorted(parse_schedule(fetch(), cfg["QUEUE"]).items()):
         days.append({
             "date": iso,
-            "outages": [{"from": hhmm(start),
-                         "to": hhmm(firm_end or end),
-                         "may_last_until": hhmm(end) if firm_end and end > firm_end else None,
-                         "certain": firm_end is not None}
-                        for start, firm_end, end in outages(cells)],
+            "outages": [{"from": hhmm(start), "to": hhmm(end), "may_last_until": hhmm(late) if late > end else None}
+                        for start, end, late in outages(cells)],
             "slots": [{"from": hhmm(i), "to": hhmm(i + 1), "status": status[c]} for i, c in enumerate(cells)],
         })
     print(json.dumps({"queue": cfg["QUEUE"], "source": SOURCE, "days": days}, ensure_ascii=False, indent=2))
