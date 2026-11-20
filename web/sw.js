@@ -1,7 +1,11 @@
-importScripts('schedule.js');
+importScripts('js/schedule.js');
 
-const CACHE = 'svet-v3';
-const SHELL = ['./', 'schedule.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png',
+const CACHE = 'svet-v4';
+// Every file of the app, kept for use offline: a new stylesheet or script goes on this list as well
+// as into index.html.
+const SHELL = ['./', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png',
+               ...['page', 'watch'].map(name => `css/${name}.css`),
+               ...['schedule', 'base', 'timeline', 'watch', 'controls', 'lists', 'notify', 'app'].map(name => `js/${name}.js`),
                ...Object.values(NAMES).flatMap(state => [`status-${state}.png`, `badge-${state}.png`])];
 const MAX_AGE_MS = 15 * 60e3;
 
@@ -18,7 +22,7 @@ self.addEventListener('activate', event => {
 
 // App shell only; cross-origin requests, the schedule among them, are not touched. Network first so
 // a redeploy shows up whole, the cached copy when offline. (Answering from the cache whenever the
-// network is merely slow would mix a new page with an old schedule.js after a deploy; so would the
+// network is merely slow would mix a new page with an old script after a deploy; so would the
 // browser's own cache, which is why every file is checked with the server.)
 self.addEventListener('fetch', event => {
   const request = event.request;
