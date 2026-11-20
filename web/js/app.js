@@ -3,8 +3,8 @@
 
 const REFRESH_MS = 10 * 60e3;
 
-const dayLabel = new Intl.DateTimeFormat('ru', {timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long'});
-const timeLabel = new Intl.DateTimeFormat('ru', {timeZone: TZ, hour: '2-digit', minute: '2-digit'});
+// Dates and times in the interface's language, in Kyiv time.
+const dated = options => new Intl.DateTimeFormat(LANG, {timeZone: TZ, ...options});
 
 let queue = store.get('queue', DEFAULT_QUEUE);
 let data = store.get('schedule', null);
@@ -19,30 +19,36 @@ function render() {
   const days = queueDays();
   const cells = days[now.date];
   const slot = Math.floor(now.minutes / 30);
-  $('day').textContent = dayLabel.format(new Date());
+  $('day').textContent = dated({weekday: 'long', day: 'numeric', month: 'long'}).format(new Date());
 
   renderDial(now, days);
   hintBezel();
   renderTotals(cells);
 
   const [state, until, left] = cells ? status(cells, now.minutes)
-    : loading ? ['Загружаю график', '', '']
-    : !data ? ['График не загрузился', 'Проверьте интернет', 'и нажмите «Обновить»']
-    : ['Графика на сегодня нет', failed ? 'нет связи с источником' : 'источник его не публикует', ''];
+    : loading ? [T.loading, '', '']
+    : !data ? T.notLoaded
+    : [T.noScheduleToday, failed ? T.noLink : T.notPublished, ''];
   $('state').textContent = state;
   $('until').textContent = until;
   $('left').textContent = left;
 
   $('today').hidden = !cells;
-  if (cells) listPeriods($('today'), 'сегодня', cells, slot, shown);
+  if (cells) listPeriods($('today'), T.days[1], cells, slot, shown);
   const tomorrow = days[shiftDate(now.date, 1)];
   $('tomorrow').hidden = !tomorrow;
-  if (tomorrow) listPeriods($('tomorrow'), 'завтра', tomorrow, -1, shown);
+  if (tomorrow) listPeriods($('tomorrow'), T.days[2], tomorrow, -1, shown);
 
-  $('source').textContent = !data ? ''
-    : (loading ? 'Обновляю… ' : failed ? 'Нет связи с источником. ' : '')
-      + (data.updated ? `Полтаваоблэнерго обновил график ${data.updated}. ` : 'Источник: Полтаваоблэнерго. ')
-      + `Загружен в ${timeLabel.format(data.fetchedAt)}.`;
+  // The source dates its schedule by day and month alone; a copy cached before that was kept as
+  // numbers has no month to show.
+  const {day, month, time} = data?.updated ?? {};
+  const updated = month && T.sourceUpdated(
+    new Intl.DateTimeFormat(LANG, {timeZone: 'UTC', day: 'numeric', month: 'long'}).format(Date.UTC(2000, month - 1, day)), time);
+  $('source').textContent = !data ? '' : [
+    loading ? T.refreshing : failed ? T.noLinkSentence : '',
+    updated || T.source,
+    T.loadedAt(dated({hour: '2-digit', minute: '2-digit', hourCycle: 'h23'}).format(data.fetchedAt)),
+  ].filter(Boolean).join(' ');
 }
 
 // The cached copy stays on screen while the request runs and is replaced only by a good answer.
@@ -87,6 +93,7 @@ document.addEventListener('visibilitychange', () => {
   else update();
 });
 
+localize();
 for (const q of QUEUES) $('queue').add(new Option(q, q, false, q === queue));
 buildDial();
 renderNotify();

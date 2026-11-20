@@ -1,11 +1,12 @@
-importScripts('js/schedule.js');
+importScripts('js/lang/ru.js', 'js/lang/uk.js', 'js/lang/en.js', 'js/i18n.js', 'js/schedule.js');
 
-const CACHE = 'svet-v4';
+const CACHE = 'svet-v5';
 // Every file of the app, kept for use offline: a new stylesheet or script goes on this list as well
 // as into index.html.
 const SHELL = ['./', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png',
                ...['page', 'watch'].map(name => `css/${name}.css`),
-               ...['schedule', 'base', 'timeline', 'watch', 'controls', 'lists', 'notify', 'app'].map(name => `js/${name}.js`),
+               ...['lang/ru', 'lang/uk', 'lang/en', 'i18n', 'schedule', 'base', 'timeline', 'watch', 'controls', 'lists',
+                   'notify', 'app'].map(name => `js/${name}.js`),
                ...Object.values(NAMES).flatMap(state => [`status-${state}.png`, `badge-${state}.png`])];
 const MAX_AGE_MS = 15 * 60e3;
 

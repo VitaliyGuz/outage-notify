@@ -1,4 +1,5 @@
 // Schedule logic shared by the page and the service worker (which loads it with importScripts).
+// Its words come from i18n.js.
 
 const SOURCE = 'https://www.poe.pl.ua/customs/dynamicgpv-info.php';
 const SLOTS = 48;
@@ -18,8 +19,8 @@ const STATUS_TAG = 'status';
 
 const pad = n => String(n).padStart(2, '0');
 const hhmm = slot => slot === SLOTS ? '24:00' : `${pad(slot >> 1)}:${slot % 2 ? '30' : '00'}`;
-const span = min => [Math.floor(min / 60) && `${Math.floor(min / 60)} ч`, min % 60 && `${min % 60} мин`]
-  .filter(Boolean).join(' ') || 'меньше минуты';
+const span = min => [Math.floor(min / 60) && T.hours(Math.floor(min / 60)), min % 60 && T.minutes(min % 60)]
+  .filter(Boolean).join(' ') || T.lessThanMinute;
 
 // The schedule is in Kyiv wall time whatever the phone's own zone is.
 const TZ = ['Europe/Kyiv', 'Europe/Kiev'].find(tz => {
@@ -59,7 +60,7 @@ function parseSchedule(html) {
     if (Object.keys(queues).length) days[`${day[3]}-${pad(MONTHS.indexOf(day[2]) + 1)}-${pad(day[1])}`] = queues;
   }
   const updated = html.replace(/<[^>]*>/g, ' ').match(new RegExp(`Оновлено:\\s*${DATE}\\s+(\\d{1,2}:\\d{2})`));
-  return {days, updated: updated && `${pad(updated[1])}.${pad(MONTHS.indexOf(updated[2]) + 1)} в ${updated[4]}`};
+  return {days, updated: updated && {day: +updated[1], month: MONTHS.indexOf(updated[2]) + 1, time: updated[4]}};
 }
 
 // The source's schedule as it is now, stamped with the time it was read. The time limit keeps a
@@ -104,25 +105,24 @@ function current(cells, minutes) {
 
 function status(cells, minutes) {
   const {state, end} = current(cells, minutes);
-  const title = state === ON ? 'Свет есть' : 'Света нет';
-  if (state === ON && end === SLOTS) return [title, 'до конца суток', ''];
-  return [title, `до ${hhmm(end)}`, `ещё ${span(end * 30 - minutes)}`];
+  const title = (state === ON ? T.power : T.noPower)[1];
+  if (state === ON && end === SLOTS) return [title, T.tillDayEnd, ''];
+  return [title, T.till(hhmm(end)), T.more(span(end * 30 - minutes))];
 }
 
 // The status as a notification: what holds now and what follows it. The state names its icons; the
 // half-lit one stands for a day with no schedule.
 function statusNotice(days, now) {
   const cells = days[now.date];
-  if (!cells) return {state: NAMES[MAYBE], title: 'Графика на сегодня нет', body: ''};
+  if (!cells) return {state: NAMES[MAYBE], title: T.noScheduleToday, body: ''};
   const {state, end} = current(cells, now.minutes);
   const [title, until] = status(cells, now.minutes);
   const later = end < SLOTS ? cells : days[shiftDate(now.date, 1)];
   const minute = end % SLOTS * 30;
-  const next = later && (current(later, minute).state === ON ? 'свет' : 'без света');
   return {
     state: NAMES[state],
     title: `${title} ${until}`,
-    body: later ? `${end < SLOTS ? 'Потом' : 'Завтра'} ${next} ${status(later, minute)[1]}` : 'Графика на завтра пока нет',
+    body: later ? T.next(end === SLOTS, current(later, minute).state === ON, status(later, minute)[1]) : T.noScheduleTomorrow,
   };
 }
 

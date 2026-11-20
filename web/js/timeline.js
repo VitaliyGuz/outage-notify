@@ -1,5 +1,5 @@
 // One queue's days laid on a single axis of half-hours, the 12-hour window the watch shows of it,
-// and what is said about a stretch of it. Nothing here touches the page. Uses schedule.js.
+// and what is said about a stretch of it. Nothing here touches the page. Uses schedule.js, i18n.js.
 
 // The window, in half-hours.
 const WINDOW = 24;
@@ -33,15 +33,16 @@ function windowBounds(at) {
 // Each clock position holds the one half-hour of the window that falls on it.
 const slotAt = (start, position) => start + mod(position - start, WINDOW);
 
-// A point of the timeline as its day and clock time; midnight closes a day as 24:00 and opens the next as 00:00.
+// A point of the timeline as its day and clock time; midnight closes a day as 24:00 and opens the
+// next as 00:00. The day is named, with a space after the name, unless it is today.
 function stamp(slot, closing) {
   const day = Math.floor((closing ? slot - 1 : slot) / SLOTS);
-  return {day: ['вчера ', '', 'завтра '][day + 1], time: hhmm(slot - day * SLOTS)};
+  return {day: day ? `${T.days[day + 1]} ` : '', time: hhmm(slot - day * SLOTS)};
 }
 // The window in words, on one line and as its times and its days apart; a day both ends fall on is named once.
 function windowWords(start) {
   const from = stamp(start), till = stamp(start + WINDOW, true);
-  const day = at => at.day || 'сегодня ';
+  const day = at => at.day || `${T.days[1]} `;
   return {
     label: `${day(from)}${from.time} – ${till.day === from.day ? '' : day(till)}${till.time}`,
     times: `${from.time} – ${till.time}`,
@@ -69,16 +70,15 @@ function period(at, slot) {
 function describe(p, minutes) {
   const from = stamp(p.start), till = stamp(p.end, true), late = stamp(p.late, true);
   const tense = minutes < p.start * 30 ? 2 : minutes < p.end * 30 ? 1 : 0;
-  const title = (p.lit ? ['Свет был', 'Свет есть', 'Свет будет'] : ['Света не было', 'Света нет', 'Света не будет'])[tense];
-  const range = p.openStart && p.openEnd ? 'весь день' : p.openStart ? `${till.day}до ${till.time}`
-    : p.openEnd ? `${from.day}с ${from.time}`
+  const title = (p.lit ? T.power : T.noPower)[tense];
+  const range = p.openStart && p.openEnd ? T.wholeDay : p.openStart ? T.rangeTill(till.day, till.time)
+    : p.openEnd ? T.rangeFrom(from.day, from.time)
     : `${from.day}${from.time} – ${till.day === from.day ? '' : till.day}${till.time}`;
-  const distance = tense === 2 ? `через ${span(p.start * 30 - minutes)}`
-    : tense === 0 ? `${span(minutes - p.end * 30)} назад`
-    : p.openEnd ? '' : `осталось ${span(p.end * 30 - minutes)}`;
+  const distance = tense === 2 ? T.inTime(span(p.start * 30 - minutes))
+    : tense === 0 ? T.ago(span(minutes - p.end * 30))
+    : p.openEnd ? '' : T.remains(span(p.end * 30 - minutes));
   const length = !p.openStart && !p.openEnd && span((p.end - p.start) * 30);
-  const note = p.delayed ? `включение может задержаться до ${late.day}${late.time}`
-    : p.openEnd ? 'дальше графика пока нет' : '';
+  const note = p.delayed ? T.mayBeDelayed(`${late.day}${late.time}`) : p.openEnd ? T.noFurtherSchedule : '';
   return [title, range, [length, distance].filter(Boolean).join(', '), note];
 }
 
@@ -88,6 +88,6 @@ function returnLines(at, minutes) {
   const p = period(at, Math.floor(minutes / 30));
   if (p.lit) return describe(p, minutes).slice(0, 3);
   const {day, time} = stamp(p.end, true), left = span(p.end * 30 - minutes);
-  return ['Включение', p.openEnd ? `не раньше чем через ${left}` : `через ${left}`, `${day}в ${time}`,
-          p.openEnd ? 'дальше графика пока нет' : ''];
+  return [T.powerBack, p.openEnd ? T.notBefore(left) : T.inTime(left), T.atTime(day, time),
+          p.openEnd ? T.noFurtherSchedule : ''];
 }

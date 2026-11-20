@@ -1,8 +1,8 @@
 {
-  "name": "График света",
-  "short_name": "Свет",
-  "description": "График отключений электроэнергии по очередям, Полтавская область",
-  "lang": "ru",
+  "name": "Power outage schedule",
+  "short_name": "Power",
+  "description": "Power outage schedule by queue, Poltava region",
+  "lang": "en",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

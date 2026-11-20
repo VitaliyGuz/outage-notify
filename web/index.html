@@ -1,34 +1,34 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>График света</title>
-<meta name="description" content="График отключений электроэнергии по очередям, Полтавская область">
+<title>Power schedule</title>
+<meta name="description" content="Power outage schedule by queue, Poltava region">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#edf2f6" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0e1a2b" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Свет">
+<meta name="apple-mobile-web-app-title" content="Power">
 <link rel="stylesheet" href="css/page.css">
 <link rel="stylesheet" href="css/watch.css">
 </head>
 <body>
 <main>
   <header>
-    <label>Очередь <select id="queue"></select></label>
+    <label><span data-t="queue"></span> <select id="queue"></select></label>
     <time id="day"></time>
   </header>
 
   <div class="status" aria-live="polite">
-    <h1 id="state">Загружаю график</h1>
+    <h1 id="state"></h1>
     <p><span id="until"></span> <span id="left"></span></p>
   </div>
 
   <div class="watch">
-    <div class="dial" id="dial" role="slider" tabindex="0" aria-label="Диапазон на циферблате">
+    <div class="dial" id="dial" role="slider" tabindex="0" data-t-label="windowLabel">
       <div class="band"></div>
       <div class="glass"></div>
       <svg viewBox="-192 -245 384 490" aria-hidden="true">
@@ -122,16 +122,16 @@
         <p></p>
       </div>
     </div>
-    <button class="pusher" id="pusher-reset" type="button" aria-label="Сбросить диапазон" title="Сбросить диапазон"></button>
-    <button class="pusher" id="pusher-refresh" type="button" aria-label="Обновить график" title="Обновить график"></button>
-    <button class="hit" id="hit-count" type="button" aria-label="Сколько до включения света"></button>
-    <button class="hit" id="hit-on" type="button" aria-label="Со светом сегодня: цифры и список"></button>
-    <button class="hit" id="hit-off" type="button" aria-label="Без света сегодня: цифры и список"></button>
+    <button class="pusher" id="pusher-reset" type="button" data-t-label="resetWindow" title></button>
+    <button class="pusher" id="pusher-refresh" type="button" data-t-label="refreshSchedule" title></button>
+    <button class="hit" id="hit-count" type="button" data-t-label="hitCount"></button>
+    <button class="hit" id="hit-on" type="button" data-t-label="hitOn"></button>
+    <button class="hit" id="hit-off" type="button" data-t-label="hitOff"></button>
   </div>
   <p class="window" id="window"></p>
   <div class="legend" id="legend">
-    <button type="button" data-state="1"><b><i></i><span></span></b><small>со светом</small></button>
-    <button type="button" data-state="2"><b><i class="off"></i><span></span></b><small>без света</small></button>
+    <button type="button" data-state="1"><b><i></i><span></span></b><small></small></button>
+    <button type="button" data-state="2"><b><i class="off"></i><span></span></b><small></small></button>
   </div>
 
   <section id="today" hidden>
@@ -152,11 +152,15 @@
 
   <footer>
     <p id="source"></p>
-    <button id="refresh" type="button">Обновить</button>
+    <button id="refresh" type="button" data-t="refresh"></button>
   </footer>
 </main>
 
 <!-- In the order they build on each other; sw.js lists the same files for offline use. -->
+<script src="js/lang/ru.js"></script>
+<script src="js/lang/uk.js"></script>
+<script src="js/lang/en.js"></script>
+<script src="js/i18n.js"></script>
 <script src="js/schedule.js"></script>
 <script src="js/base.js"></script>
 <script src="js/timeline.js"></script>

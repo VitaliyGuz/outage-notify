@@ -1,7 +1,5 @@
 // The watch as a drawing: built once, then redrawn from the schedule and the clock. What moves it
-// under the hand is in controls.js. Uses schedule.js, base.js, timeline.js.
-
-const dateLabel = new Intl.DateTimeFormat('ru', {timeZone: TZ, weekday: 'short', day: 'numeric'});
+// under the hand is in controls.js. Uses schedule.js, base.js, timeline.js, i18n.js.
 
 const NS = 'http://www.w3.org/2000/svg';
 // The watch is drawn around the origin; degrees run clockwise from 12.
@@ -145,6 +143,7 @@ function renderDial(now, days) {
   $('cursor').toggleAttribute('hidden', !view || slot < start || slot >= start + WINDOW);
   for (const id of ['cursor', 'hour-hand']) $(id).setAttribute('transform', `rotate(${now.minutes / 2})`);
   $('minute-hand').setAttribute('transform', `rotate(${now.minutes % 60 * 6})`);
+  const dateLabel = new Intl.DateTimeFormat(LANG, {timeZone: TZ, weekday: 'short', day: 'numeric'});
   const today = Object.fromEntries(dateLabel.formatToParts(new Date()).map(part => [part.type, part.value]));
   $('date').textContent = `${today.weekday.toUpperCase()} ${today.day}`;
   // The top small dial reads the time left until the power is back, once round in four hours;

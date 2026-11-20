@@ -1,6 +1,6 @@
 // The two notifications: an alert a quarter of an hour before an outage, while the page is open,
 // and the status kept in the shade, which the worker's pushes renew when it is not (sw.js,
-// worker/). Uses schedule.js, base.js and the page's state in app.js.
+// worker/). Uses schedule.js, base.js, i18n.js and the page's state in app.js.
 
 // The status push: the public half of the key pair it is signed with, and the worker that keeps the
 // list of devices to nudge (worker/).
@@ -17,11 +17,11 @@ function dueAlert(days, now, queue) {
       if (iso === tomorrow && o.start === 0 && days[now.date]?.at(-1) === OFF) continue;
       const wait = offset + o.start * 30 - now.minutes;
       if (wait <= 0 || wait > LEAD_MIN) continue;
-      const tail = o.late > o.end ? ` Включение может задержаться до ${hhmm(o.late)}.` : '';
+      const tail = o.late > o.end ? ` ${T.alertDelay(hhmm(o.late))}` : '';
       return {
         key: `${queue} ${iso} ${hhmm(o.start)}`,
-        title: `Через ${wait} мин отключение света`,
-        body: `Очередь ${queue}: ${hhmm(o.start)}–${hhmm(o.end)}.${tail}`,
+        title: T.alertTitle(wait),
+        body: T.alertBody(queue, hhmm(o.start), hhmm(o.end)) + tail,
       };
     }
   }
@@ -39,19 +39,14 @@ let statusShown = '';
 function renderNotify() {
   const blocked = canNotify && Notification.permission === 'denied';
   $('notify').hidden = !canNotify || blocked;
-  $('notify').textContent = notifyOn() ? 'Выключить уведомления' : 'Включить уведомления';
-  $('notify-hint').textContent =
-    blocked ? 'Уведомления запрещены. Разрешите их для этого сайта в настройках браузера.'
-    : canNotify ? `Напомним за ${LEAD_MIN} минут до отключения, пока приложение открыто.`
-    : isIos ? 'На iPhone сначала добавьте страницу на экран «Домой», потом включите уведомления здесь.'
-    : 'Этот браузер не показывает уведомления.';
+  $('notify').textContent = notifyOn() ? T.notifyOff : T.notifyOn;
+  $('notify-hint').textContent = blocked ? T.notifyBlocked : canNotify ? T.notifyHint(LEAD_MIN)
+    : isIos ? T.notifyIos : T.notifyUnsupported;
 
   $('status').hidden = !canPush || blocked;
-  $('status').textContent = statusOn() ? 'Убрать статус из шторки' : 'Показывать статус в шторке';
+  $('status').textContent = statusOn() ? T.statusOff : T.statusOn;
   $('status-hint').textContent = !canPush || blocked ? ''
-    : pushFailed ? 'Не получилось подписаться на обновления. Проверьте интернет и попробуйте ещё раз.'
-    : statusOn() ? 'Статус обновляется сам, даже когда приложение закрыто.'
-    : 'Постоянное уведомление: есть ли свет и до скольки.';
+    : pushFailed ? T.pushFailed : statusOn() ? T.statusHintOn : T.statusHintOff;
 }
 
 // Puts this device on the worker's list of devices to nudge, or takes it off.
