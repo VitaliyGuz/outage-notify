@@ -1,6 +1,6 @@
 // The two notifications: an alert a quarter of an hour before an outage, while the page is open,
 // and the status kept in the shade, which the worker's pushes renew when it is not (sw.js,
-// worker/). Uses schedule.js, base.js, i18n.js and the page's state in app.js.
+// worker/). Uses schedule.js, base.js, timeline.js, i18n.js and the page's state in app.js.
 
 // The status push: the public half of the key pair it is signed with, and the worker that keeps the
 // list of devices to nudge (worker/).
@@ -8,24 +8,19 @@ const VAPID_PUBLIC_KEY = 'BF5-2NY2Un22wD8YqqqAabhGnaqdK_Sk1XVRjV-ieRhI13UnxteOVp
 const PUSH_API = 'https://outage-notify.vitaliy-guz.workers.dev';
 const LEAD_MIN = 15;
 
-// The alert due right now, if an outage starts within LEAD_MIN.
+// The alert due right now, if the power goes off within LEAD_MIN.
 function dueAlert(days, now, queue) {
-  const tomorrow = shiftDate(now.date, 1);
-  for (const [iso, offset] of [[now.date, 0], [tomorrow, 24 * 60]]) {
-    for (const o of outages(days[iso] ?? '')) {
-      // An outage running over midnight was announced the day before, if that day's schedule is known.
-      if (iso === tomorrow && o.start === 0 && days[now.date]?.at(-1) === OFF) continue;
-      const wait = offset + o.start * 30 - now.minutes;
-      if (wait <= 0 || wait > LEAD_MIN) continue;
-      const tail = o.late > o.end ? ` ${T.alertDelay(hhmm(o.late))}` : '';
-      return {
-        key: `${queue} ${iso} ${hhmm(o.start)}`,
-        title: T.alertTitle(wait),
-        body: T.alertBody(queue, hhmm(o.start), hhmm(o.end)) + tail,
-      };
-    }
-  }
-  return null;
+  if (!days[now.date]) return null;
+  const at = timeline(days, now.date), p = period(at, Math.floor(now.minutes / 30));
+  const wait = p.end * 30 - now.minutes;
+  if (!p.lit || p.openEnd || wait > LEAD_MIN) return null;
+  const outage = period(at, p.end), from = stamp(outage.start);
+  const tail = outage.delayed ? ` ${sentence(T.mayBeDelayed(stamp(outage.late, true).time))}` : '';
+  return {
+    key: `${queue} ${shiftDate(now.date, Math.floor(outage.start / SLOTS))} ${from.time}`,
+    title: T.alertTitle(span(wait)),
+    body: T.alertBody(queue, from.time, stamp(outage.end, true).time) + tail,
+  };
 }
 
 const canNotify = 'Notification' in window && 'serviceWorker' in navigator;
@@ -61,25 +56,32 @@ const enlistDevice = async registration => enlist(
     ?? await registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: VAPID_PUBLIC_KEY}),
   true);
 
+// A notification through the service worker; true once it is up. A failure is only logged: the
+// caller leaves it unrecorded and so tries again on the next minute.
+async function post(title, options) {
+  try {
+    await (await navigator.serviceWorker.ready).showNotification(title, options);
+    return true;
+  } catch (e) {
+    console.warn('notification:', e);
+    return false;
+  }
+}
+
 // The status notification is replaced only when its text changes, so one swiped away stays away
 // until then (or until the next push).
 async function showStatus() {
   if (!statusOn() || !data) return;
   const notice = statusNotice(queueDays(), kyivNow());
   const text = `${queue} ${notice.title} ${notice.body}`;
-  if (text === statusShown) return;
-  statusShown = text;
-  const registration = await navigator.serviceWorker.ready;
-  await registration.showNotification(notice.title, statusOptions(notice));
+  if (text !== statusShown && await post(notice.title, statusOptions(notice))) statusShown = text;
 }
 
 async function notifyIfDue() {
   if (!notifyOn() || !data) return;
   const alert = dueAlert(queueDays(), kyivNow(), queue);
   if (!alert || store.get('notified') === alert.key) return;
-  const registration = await navigator.serviceWorker.ready;
-  await registration.showNotification(alert.title, {body: alert.body, tag: alert.key, icon: 'icon-192.png'});
-  store.set('notified', alert.key);
+  if (await post(alert.title, {body: alert.body, tag: alert.key, icon: 'icon-192.png'})) store.set('notified', alert.key);
 }
 
 $('notify').addEventListener('click', async () => {

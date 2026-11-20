@@ -86,7 +86,7 @@
 #cursor { stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round; }
 #scale text { fill: var(--ink); font-size: 29px; }
 /* The small dials read by their needles; a press spells the reading out over the face. */
-.sub .face { fill: #050506; stroke: url(#chrome); stroke-width: 4.5; }
+.face { fill: #050506; stroke: url(#chrome); stroke-width: 4.5; }
 .turned { fill: none; stroke: #fff; stroke-opacity: .08; }
 .ticks path { stroke: #eef0f1; stroke-width: 1.5; }
 .ticks text { fill: #eef0f1; font-size: 8.5px; font-weight: 500; }
@@ -103,28 +103,28 @@
 .pin { fill: var(--accent); }
 .pin-eye { fill: var(--ink); }
 /* One step a second: a sweeping hand would have the whole watch repainted on every frame. */
-.seconds { animation: tick 60s steps(60) var(--tick, 0s) infinite; }
+#second-hand { animation: tick 60s steps(60) var(--tick, 0s) infinite; }
 @keyframes tick { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .turns { transition: none; }
-  .seconds { animation: none; }
+  #second-hand { animation: none; }
 }
 #shade { fill: #000; fill-opacity: .86; }
 #mark { fill: none; stroke: var(--ink); stroke-width: 2.5; stroke-linecap: round; }
-/* The case's two buttons are drawn with the watch; these are their touch areas. */
+/* The case's buttons are drawn with the watch; the lower one has a touch area and refreshes the
+   schedule. */
 .pusher, .hit {
   position: absolute; aspect-ratio: 1; transform: translate(-50%, -50%);
   padding: 0; border: 0; border-radius: 50%; background: none;
 }
 .pusher { left: 93.7%; width: 13%; }
-#pusher-reset { top: 31.8%; }
 #pusher-refresh { top: 68.2%; }
 /* The small dials are pressed through these, laid over them. */
 .hit { left: 50%; top: 50%; width: 17.2%; }
 #hit-count { top: 39.59%; }
 #hit-off { top: 60.41%; }
 #hit-on { left: 32.55%; }
-.watch:has(#pusher-reset:active) #pusher-top, .watch:has(#pusher-refresh:active) #pusher-bottom { transform: translateY(3px); }
+.watch:has(#pusher-refresh:active) #pusher-bottom { transform: translateY(3px); }
 
 /* The description of an inspected period, over the shaded face. */
 .tip {

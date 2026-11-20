@@ -3,9 +3,9 @@
 
 App icons: a green ring with gaps on night blue, amber centre.
 Status icons (the notification's picture): the ring full when there is power, an empty outline
-when there is none, dashed during switching.
+when there is none, dashed for a day with no schedule.
 Badges (the status-bar glyph, where Android keeps only the alpha channel): a disc, a hollow ring,
-a half-filled ring.
+a half-filled ring, in the same order.
 """
 import math
 import struct

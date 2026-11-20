@@ -5,7 +5,6 @@ const LANG_RU = {
   queue: 'Очередь',
   refresh: 'Обновить',
   windowLabel: 'Диапазон на циферблате',
-  resetWindow: 'Сбросить диапазон',
   refreshSchedule: 'Обновить график',
   hitCount: 'Сколько до включения света',
   hitOn: 'Со светом сегодня: цифры и список',
@@ -16,21 +15,22 @@ const LANG_RU = {
   lessThanMinute: 'меньше минуты',
   days: ['вчера', 'сегодня', 'завтра'],
 
-  // Each as it was, is and will be.
+  // Each as it was, is and will be. A day, here and below, is empty for today, otherwise the day's
+  // name and a space.
   power: ['Свет был', 'Свет есть', 'Свет будет'],
   noPower: ['Света не было', 'Света нет', 'Света не будет'],
-  till: time => `до ${time}`,
+  till: (day, time) => `до ${day}${time}`,
   tillDayEnd: 'до конца суток',
   more: span => `ещё ${span}`,
   noScheduleToday: 'Графика на сегодня нет',
   noScheduleTomorrow: 'Графика на завтра пока нет',
-  next: (tomorrow, lit, until) => `${tomorrow ? 'Завтра' : 'Потом'} ${lit ? 'свет' : 'без света'} ${until}`,
+  next: (lit, until) => `Потом ${lit ? 'свет' : 'без света'} ${until}`,
   loading: 'Загружаю график',
   notLoaded: ['График не загрузился', 'Проверьте интернет', 'и нажмите «Обновить»'],
   noLink: 'нет связи с источником',
   notPublished: 'источник его не публикует',
 
-  // A period on the watch; day is empty for today, otherwise the day's name and a space.
+  // A period on the watch.
   wholeDay: 'весь день',
   rangeTill: (day, time) => `${day}до ${time}`,
   rangeFrom: (day, time) => `${day}с ${time}`,
@@ -53,9 +53,8 @@ const LANG_RU = {
   stillAhead: span => `до конца суток ещё ${span}`,
   noMoreToday: 'сегодня больше не будет',
 
-  alertTitle: wait => `Через ${wait} мин отключение света`,
+  alertTitle: wait => `Через ${wait} отключение света`,
   alertBody: (queue, from, to) => `Очередь ${queue}: ${from}–${to}.`,
-  alertDelay: time => `Включение может задержаться до ${time}.`,
   notifyOn: 'Включить уведомления',
   notifyOff: 'Выключить уведомления',
   notifyBlocked: 'Уведомления запрещены. Разрешите их для этого сайта в настройках браузера.',
@@ -69,7 +68,6 @@ const LANG_RU = {
   statusHintOff: 'Постоянное уведомление: есть ли свет и до скольки.',
 
   refreshing: 'Обновляю…',
-  noLinkSentence: 'Нет связи с источником.',
   sourceUpdated: (date, time) => `Полтаваоблэнерго обновил график ${date} в ${time}.`,
   source: 'Источник: Полтаваоблэнерго.',
   loadedAt: time => `Загружен в ${time}.`,

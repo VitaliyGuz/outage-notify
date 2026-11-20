@@ -3,9 +3,6 @@
 
 const REFRESH_MS = 10 * 60e3;
 
-// Dates and times in the interface's language, in Kyiv time.
-const dated = options => new Intl.DateTimeFormat(LANG, {timeZone: TZ, ...options});
-
 let queue = store.get('queue', DEFAULT_QUEUE);
 let data = store.get('schedule', null);
 let loading = false;
@@ -14,7 +11,10 @@ let failed = false;
 // The cached copy holds every queue; this is the selected one's days.
 const queueDays = () => daysOf(data?.days ?? {}, queue);
 
+// Everything on the page, from the schedule and the clock. A hidden page is left as it is: it is
+// drawn when it is looked at again.
 function render() {
+  if (document.hidden) return;
   const now = kyivNow();
   const days = queueDays();
   const cells = days[now.date];
@@ -25,7 +25,7 @@ function render() {
   hintBezel();
   renderTotals(cells);
 
-  const [state, until, left] = cells ? status(cells, now.minutes)
+  const [state, until, left] = view ? status(view.at, now.minutes)
     : loading ? [T.loading, '', '']
     : !data ? T.notLoaded
     : [T.noScheduleToday, failed ? T.noLink : T.notPublished, ''];
@@ -33,19 +33,17 @@ function render() {
   $('until').textContent = until;
   $('left').textContent = left;
 
-  $('today').hidden = !cells;
-  if (cells) listPeriods($('today'), T.days[1], cells, slot, shown);
   const tomorrow = days[shiftDate(now.date, 1)];
-  $('tomorrow').hidden = !tomorrow;
-  if (tomorrow) listPeriods($('tomorrow'), T.days[2], tomorrow, -1, shown);
+  listPeriods($('today'), T.days[1], cells, slot, tomorrow);
+  listPeriods($('tomorrow'), T.days[2], tomorrow, -1);
 
-  // The source dates its schedule by day and month alone; a copy cached before that was kept as
-  // numbers has no month to show.
-  const {day, month, time} = data?.updated ?? {};
-  const updated = month && T.sourceUpdated(
-    new Intl.DateTimeFormat(LANG, {timeZone: 'UTC', day: 'numeric', month: 'long'}).format(Date.UTC(2000, month - 1, day)), time);
+  // A copy cached by an earlier version of the page keeps the source's stamp in another form, and
+  // goes without it until the schedule is loaded anew.
+  const [, date, time] = data?.updated?.match?.(/^(\d{4}-\d\d-\d\d) (\d\d:\d\d)$/) ?? [];
+  const updated = date && T.sourceUpdated(
+    dated({timeZone: 'UTC', day: 'numeric', month: 'long'}).format(new Date(`${date}T00:00Z`)), time);
   $('source').textContent = !data ? '' : [
-    loading ? T.refreshing : failed ? T.noLinkSentence : '',
+    loading ? T.refreshing : failed ? sentence(T.noLink) : '',
     updated || T.source,
     T.loadedAt(dated({hour: '2-digit', minute: '2-digit', hourCycle: 'h23'}).format(data.fetchedAt)),
   ].filter(Boolean).join(' ');

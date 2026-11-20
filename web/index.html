@@ -24,7 +24,7 @@
 
   <div class="status" aria-live="polite">
     <h1 id="state"></h1>
-    <p><span id="until"></span> <span id="left"></span></p>
+    <p><span id="until"></span> <span id="left" aria-live="off"></span></p>
   </div>
 
   <div class="watch">
@@ -63,19 +63,20 @@
               <rect class="ribs" x="-71" y="-245" width="142" height="87"/>
             </g>
           </g>
+          <g id="pusher"><rect class="steel" x="-19" y="-187" width="38" height="14" rx="2.5"/><path class="grooves" d="M-12 -186.5V-181M-6 -186.5V-181M0 -186.5V-181M6 -186.5V-181M12 -186.5V-181"/></g>
         </defs>
         <use href="#strap"/>
         <use href="#strap" transform="scale(1 -1)"/>
         <path class="steel" d="M171 -49Q200 0 171 49Z"/>
         <g transform="rotate(62)">
-          <g id="pusher-top"><rect class="steel" x="-19" y="-187" width="38" height="14" rx="2.5"/><path class="grooves" d="M-12 -186.5V-181M-6 -186.5V-181M0 -186.5V-181M6 -186.5V-181M12 -186.5V-181"/></g>
+          <use id="pusher-top" href="#pusher"/>
         </g>
         <g transform="rotate(118)">
-          <g id="pusher-bottom"><rect class="steel" x="-19" y="-187" width="38" height="14" rx="2.5"/><path class="grooves" d="M-12 -186.5V-181M-6 -186.5V-181M0 -186.5V-181M6 -186.5V-181M12 -186.5V-181"/></g>
+          <use id="pusher-bottom" href="#pusher"/>
         </g>
         <circle class="case" r="168.5"/>
         <circle class="edge" r="179.5"/>
-        <g class="turns" id="bezel"><path id="gear"/></g>
+        <g class="turns"><path id="gear"/></g>
         <circle class="sheen" r="166"/>
         <g class="turns" id="marks"><path class="pip" d="M0 -159L-8 -173H8Z"/></g>
         <circle class="groove" r="158"/>
@@ -87,14 +88,14 @@
         <path id="seam" d="M0 -122V-132" hidden/>
         <path id="cursor" d="M0 -120V-133" hidden/>
         <g id="scale"></g>
-        <g class="sub" id="count" transform="translate(0 -51)">
+        <g id="count" transform="translate(0 -51)">
           <circle class="face" r="31"/><g class="ticks"></g><path class="needle" d="M-1.7 4L0 -22L1.7 4Z"/><circle class="hub" r="3"/>
         </g>
-        <g class="sub" id="total-on" transform="translate(-67 0)">
+        <g id="total-on" transform="translate(-67 0)">
           <circle class="turned" r="27"/><circle class="turned" r="20"/><circle class="turned" r="13"/>
           <g class="ticks"></g><path class="needle" d="M0 6V-21"/><circle class="hub" r="2.2"/>
         </g>
-        <g class="sub" id="total-off" transform="translate(0 51)">
+        <g id="total-off" transform="translate(0 51)">
           <circle class="face" r="31"/><g class="ticks"></g><path class="needle" d="M-1.7 4L0 -22L1.7 4Z"/><circle class="hub" r="3"/>
         </g>
         <g class="date"><rect x="27" y="-10" width="58" height="20" rx="1.5"/><text id="date" x="56" y=".5"></text></g>
@@ -108,7 +109,7 @@
           <path class="blade" d="M-3.4 -22V-98L0 -110L3.4 -98V-22Z"/>
           <path class="facet" d="M0 -22V-110L3.4 -98V-22Z"/>
         </g>
-        <g class="seconds" id="second-hand"><path d="M0 24V-126M0 -100L3.2 -92L0 -84L-3.2 -92Z"/></g>
+        <g id="second-hand"><path d="M0 24V-126M0 -100L3.2 -92L0 -84L-3.2 -92Z"/></g>
         <circle class="pin" r="5"/><circle class="pin-eye" r="2.2"/>
         <circle id="shade" r="121.5" hidden/>
         <path id="mark" hidden/>
@@ -122,7 +123,6 @@
         <p></p>
       </div>
     </div>
-    <button class="pusher" id="pusher-reset" type="button" data-t-label="resetWindow" title></button>
     <button class="pusher" id="pusher-refresh" type="button" data-t-label="refreshSchedule" title></button>
     <button class="hit" id="hit-count" type="button" data-t-label="hitCount"></button>
     <button class="hit" id="hit-on" type="button" data-t-label="hitOn"></button>

@@ -1,7 +1,9 @@
-// The watch as a drawing: built once, then redrawn from the schedule and the clock. What moves it
-// under the hand is in controls.js. Uses schedule.js, base.js, timeline.js, i18n.js.
+// The watch as a drawing: built once, then redrawn from the schedule and the clock, and from what
+// the hand has done to it, which controls.js sets. Uses schedule.js, base.js, timeline.js, i18n.js.
 
 const NS = 'http://www.w3.org/2000/svg';
+// The angle a half-hour takes on the 12-hour face.
+const STEP = 360 / WINDOW;
 // The watch is drawn around the origin; degrees run clockwise from 12.
 const point = (deg, r) => [r * Math.sin(deg * Math.PI / 180), -r * Math.cos(deg * Math.PI / 180)].map(v => v.toFixed(2));
 const svg = (tag, attrs, parent) => {
@@ -11,7 +13,7 @@ const svg = (tag, attrs, parent) => {
 };
 // An arc of the dial between two clock positions, inset so that neighbours do not touch.
 const arc = (from, to, r) =>
-  `M${point(from * 15 + 0.9, r)}A${r} ${r} 0 ${(to - from) * 15 > 180 ? 1 : 0} 1 ${point(to * 15 - 0.9, r)}`;
+  `M${point(from * STEP + 0.9, r)}A${r} ${r} 0 ${(to - from) * STEP > 180 ? 1 : 0} 1 ${point(to * STEP - 0.9, r)}`;
 const stroke = (deg, from, to, parent) => svg('path', {d: `M${point(deg, from)}L${point(deg, to)}`}, parent);
 const numeral = (deg, r, text, parent, turn = 0) => {
   const [x, y] = point(deg, r);
@@ -75,20 +77,22 @@ function buildDial() {
 }
 // The bezel's pip points at the clock position the window starts from.
 const turning = document.querySelectorAll('.turns');
-const setBezel = turn => { for (const part of turning) part.style.transform = `rotate(${turn * 15}deg)`; };
-
-// The drawing's size, and where on it the bezel begins and the case ends.
-const VIEW = {width: 384, height: 490}, BEZEL = 134, CASE = 184;
+const turnedBy = turn => `rotate(${turn * STEP}deg)`;
+const setBezel = turn => { for (const part of turning) part.style.transform = turnedBy(turn); };
 
 // What the last render put on the dial: the timeline, the window's start, the start it has by
 // default and how far the bezel may turn it.
 let view = null;
-
+// The window start the bezel is turned to; null while the dial shows the default window.
+let pinned = null;
+// The bezel while it is dragged: the pointer's last angle and the turn so far, in clicks.
+let grip = null;
+// The timer that lets a window set with the wheel or the keys go back; 0 when none is running.
+let linger = 0;
+// The clock position inspected on the ring, or null.
 let probe = null;
-// What is spelled out over the face instead: a state, for its figures for today, or RETURN, for the
-// time left until the power is back.
-let tally = null;
-const RETURN = 'return';
+// What is spelled out over the face instead: a function that gives its lines, or null.
+let spell = null;
 
 // probe is the clock position under the pointer (or last tapped); the whole period it falls in is
 // traced along the ring and described over the face, which is shaded for it. While the bezel is
@@ -97,8 +101,7 @@ function renderProbe() {
   const held = grip || linger;
   const p = view && !held && probe !== null ? period(view.at, slotAt(view.start, probe)) : null;
   const words = view && held && windowWords(view.start);
-  const lines = words ? [words.times, words.days] : p ? describe(p, kyivNow().minutes)
-    : !view || !tally ? null : tally === RETURN ? returnLines(view.at, kyivNow().minutes) : tallyLines(tally);
+  const lines = words ? [words.times, words.days] : p ? describe(p, kyivNow().minutes) : view && spell ? spell() : null;
   $('tip').hidden = !lines;
   $('shade').toggleAttribute('hidden', !lines);
   $('mark').toggleAttribute('hidden', !p);
@@ -109,10 +112,10 @@ function renderProbe() {
   });
 }
 
-function setProbe(position, state = null) {
-  if (position === probe && state === tally) return;
+function setProbe(position, lines = null) {
+  if (position === probe && lines === spell) return;
   probe = position;
-  tally = state;
+  spell = lines;
   renderProbe();
 }
 
@@ -121,12 +124,11 @@ function setProbe(position, state = null) {
 // redraws only this.
 function renderDial(now, days) {
   const slot = Math.floor(now.minutes / 30);
-  if (pinned?.date !== now.date) pinned = null;
   view = null;
   if (days[now.date]) {
     const at = timeline(days, now.date);
     const base = windowStart(at, slot), {min, max} = windowBounds(at);
-    view = {at, base, min, max, start: pinned ? Math.min(Math.max(pinned.start, min), max) : base};
+    view = {at, base, min, max, start: pinned === null ? base : clamp(pinned, min, max)};
   }
   const start = view?.start ?? 0;
   segments.forEach((seg, position) => {
@@ -137,14 +139,13 @@ function renderDial(now, days) {
   hours.forEach((hour, h) => { hour.textContent = pad(Math.floor(mod(slotAt(start, 2 * h), SLOTS) / 2)); });
   if (!grip) setBezel(start);
   $('seam').toggleAttribute('hidden', !view);
-  $('seam').setAttribute('transform', `rotate(${start * 15})`);
+  $('seam').setAttribute('transform', `rotate(${start * STEP})`);
   // The hands keep the time whatever the window; the mark of "now" on the ring holds only inside it,
   // where the hour hand's place is not a half-hour twelve hours away.
   $('cursor').toggleAttribute('hidden', !view || slot < start || slot >= start + WINDOW);
   for (const id of ['cursor', 'hour-hand']) $(id).setAttribute('transform', `rotate(${now.minutes / 2})`);
   $('minute-hand').setAttribute('transform', `rotate(${now.minutes % 60 * 6})`);
-  const dateLabel = new Intl.DateTimeFormat(LANG, {timeZone: TZ, weekday: 'short', day: 'numeric'});
-  const today = Object.fromEntries(dateLabel.formatToParts(new Date()).map(part => [part.type, part.value]));
+  const today = parts(dated({weekday: 'short', day: 'numeric'}), new Date());
   $('date').textContent = `${today.weekday.toUpperCase()} ${today.day}`;
   // The top small dial reads the time left until the power is back, once round in four hours;
   // anything longer leaves its needle there, and with the power on it rests at the top.
@@ -155,6 +156,6 @@ function renderDial(now, days) {
   $('window').textContent = label;
   const slider = {valuemin: view?.min ?? 0, valuemax: view?.max ?? 0, valuenow: start, valuetext: label};
   for (const name in slider) $('dial').setAttribute(`aria-${name}`, slider[name]);
-  if (!view) probe = tally = null;
+  if (!view) probe = spell = null;
   renderProbe();
 }

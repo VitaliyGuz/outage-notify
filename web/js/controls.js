@@ -1,12 +1,12 @@
 // The watch under the hand: the bezel turned by a drag, the wheel or the keys, a period inspected
-// on the ring, the small dials and the upper side button pressed. Uses watch.js and what it uses;
-// the small dials also switch the lists (lists.js).
+// on the ring, the small dials pressed. It sets what watch.js draws from
+// (pinned, grip, linger, probe, spell). Uses watch.js and what it uses; the small dials also read
+// and switch the lists (lists.js).
 
-// The window start the bezel was turned to, with the day it was counted from; null while the dial
-// shows the default window.
-let pinned = null;
-// The bezel while it is dragged: the pointer's last angle and the turn so far, in clicks.
-let grip = null;
+// The drawing's box, and the radii at which the ring's touch area begins, the bezel begins and the
+// case ends.
+const VIEW = document.querySelector('.dial svg').viewBox.baseVal, RING = 105, BEZEL = 134, CASE = 184;
+
 // Until the bezel has been turned once on this device, it shows on opening that it turns.
 let turned = store.get('turned', false);
 let hinted = false;
@@ -22,24 +22,22 @@ function polar(event) {
 const onBezel = r => r >= BEZEL && r <= CASE;
 function probeAt(event) {
   const {r, deg} = polar(event);
-  setProbe(r < 105 || r >= BEZEL ? null : Math.floor(deg / 15));
+  setProbe(r < RING || r >= BEZEL ? null : Math.floor(deg / STEP));
 }
 
 // Turns the bezel to a window start, as far as the published days allow.
 function turnTo(start) {
   if (!view) return;
-  start = Math.min(Math.max(start, view.min), view.max);
+  start = clamp(start, view.min, view.max);
   if (start === view.start) return;
-  const now = kyivNow();
-  pinned = start === view.base ? null : {date: now.date, start};
-  probe = tally = null;
+  pinned = start === view.base ? null : start;
+  probe = spell = null;
   $('dial').classList.remove('returning');
   if (!turned) store.set('turned', turned = true);
   navigator.vibrate?.(5);
-  renderDial(now, queueDays());
+  renderDial(kyivNow(), queueDays());
 }
 // A window set with the wheel or the keys has no release to end it, so it goes back after a pause.
-let linger = 0;
 function turnBriefly(step) {
   clearTimeout(linger);
   linger = setTimeout(resetWindow, 1500);
@@ -57,8 +55,7 @@ function resetWindow() {
 function hintBezel() {
   if (hinted || turned || !view || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   hinted = true;
-  const at = turn => ({transform: `rotate(${turn * 15}deg)`});
-  const rock = [at(view.start), at(view.start + 1), at(view.start)];
+  const rock = [view.start, view.start + 1, view.start].map(turn => ({transform: turnedBy(turn)}));
   for (const part of turning) part.animate(rock, {duration: 900, delay: 600, easing: 'ease-in-out'});
 }
 
@@ -72,7 +69,7 @@ $('dial').addEventListener('pointerdown', e => {
   $('dial').setPointerCapture(e.pointerId);
   $('dial').classList.add('turning');
   $('dial').classList.remove('returning');
-  probe = tally = null;
+  probe = spell = null;
   renderProbe();
 });
 $('dial').addEventListener('pointermove', e => {
@@ -81,8 +78,8 @@ $('dial').addEventListener('pointermove', e => {
   const {deg} = polar(e);
   // The bezel follows the finger between clicks, gives a third of a click past either end of the
   // schedule and stops there.
-  const turn = grip.turn + (mod(deg - grip.deg + 180, 360) - 180) / 15;
-  grip = {deg, turn: Math.min(Math.max(turn, view.min - .35), view.max + .35)};
+  const turn = grip.turn + (mod(deg - grip.deg + 180, 360) - 180) / STEP;
+  grip = {deg, turn: clamp(turn, view.min - .35, view.max + .35)};
   setBezel(grip.turn);
   turnTo(Math.round(grip.turn));
 });
@@ -108,19 +105,18 @@ $('dial').addEventListener('wheel', e => {
 }, {passive: false});
 $('dial').addEventListener('keydown', e => {
   const step = {ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1}[e.key];
-  if (!view || !step && e.key !== 'Home') return;
+  if (!view || !step) return;
   e.preventDefault();
-  if (step) turnBriefly(step);
-  else resetWindow();
+  turnBriefly(step);
 });
-$('pusher-reset').addEventListener('click', resetWindow);
 // The small dials: the countdown spells out how long until the power is back; a total spells out
 // the day's figures for its state and picks that state's list under the watch.
-$('hit-count').addEventListener('click', () => { if (view) setProbe(null, RETURN); });
+// Without a schedule there is nothing to spell out, and nothing is left armed for when one comes.
+$('hit-count').addEventListener('click', () => { if (view) setProbe(null, () => returnLines(view.at, kyivNow().minutes)); });
 for (const [id, state] of [['hit-on', ON], ['hit-off', OFF]]) {
   $(id).addEventListener('click', () => {
     choose(state);
-    setProbe(null, state);
+    if (view) setProbe(null, () => tallyLines(state));
   });
 }
 $('dial').addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') setProbe(null); });

@@ -4,7 +4,7 @@ compatibility_date = "2026-10-01"
 
 # States change on the half-hour, so a nudge every five minutes lands right on each change.
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["*/15 * * * *"]
 
 [vars]
 # Pages allowed to register a device, comma-separated.

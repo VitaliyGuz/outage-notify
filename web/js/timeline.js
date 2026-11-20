@@ -1,10 +1,41 @@
-// One queue's days laid on a single axis of half-hours, the 12-hour window the watch shows of it,
-// and what is said about a stretch of it. Nothing here touches the page. Uses schedule.js, i18n.js.
+// A day in stretches of power and of none; one queue's days laid on a single axis of half-hours,
+// the 12-hour window the watch shows of it, and what is said about a stretch of it, the status
+// among it. Nothing here touches the page, and the service worker loads it too. Uses schedule.js,
+// i18n.js.
 
 // The window, in half-hours.
 const WINDOW = 24;
 
 const mod = (n, m) => ((n % m) + m) % m;
+const clamp = (n, min, max) => Math.min(Math.max(n, min), max);
+
+// The switching half-hours that follow an outage count as power: as a rule it is back by then.
+const lit = cell => cell === ON || cell === MAYBE;
+
+// Where the switching half-hours that begin at edge end; edge itself where there are none. They
+// follow an outage: its end is their edge, and so is the start of the power after it.
+function lateFrom(at, edge) {
+  let late = edge;
+  while (at(late) === MAYBE) late++;
+  return late;
+}
+
+// A day's stretches of power (the switching half-hours counted with it) or of none, each with the
+// end of the switching half-hours at its edge and whether there are any. after is the next day's
+// cells, where an outage that ends at midnight has them; late then counts on past the day's end.
+function runs(cells, state, after = '') {
+  const same = cell => cell !== undefined && lit(cell) === (state === ON);
+  const all = cells + after;
+  const periods = [];
+  for (let i = 0; i < cells.length; i++) {
+    if (!same(cells[i])) continue;
+    const start = i;
+    while (same(cells[i + 1])) i++;
+    const edge = state === ON ? start : i + 1, late = lateFrom(slot => all[slot], edge);
+    periods.push({start, end: i + 1, late, delayed: late > edge});
+  }
+  return periods;
+}
 
 // Half-hour states on one axis counted from today's midnight (-48..-1 yesterday, 48..95 tomorrow);
 // undefined where no schedule is known.
@@ -59,9 +90,7 @@ function period(at, slot) {
   let start = slot, end = slot + 1;
   while (on(start - 1) === on(slot)) start--;
   while (on(end) === on(slot)) end++;
-  const edge = on(slot) ? start : end;
-  let late = edge;
-  while (at(late) === MAYBE) late++;
+  const edge = on(slot) ? start : end, late = lateFrom(at, edge);
   return {start, end, late, delayed: late > edge, lit: on(slot),
           openStart: at(start - 1) === undefined, openEnd: at(end) === undefined};
 }
@@ -82,12 +111,40 @@ function describe(p, minutes) {
   return [title, range, [length, distance].filter(Boolean).join(', '), note];
 }
 
-// How long until the power is back, as the lines shown over the face. With the power on there is
-// nothing to wait for, and the lines describe what holds now, less the note on a delayed return.
+// How long until the power is back, as the lines shown over the face: the one time, the end of the
+// outage, without the note that it may be delayed. With the power on there is nothing to wait for,
+// and the lines describe what holds now, less that note as well.
 function returnLines(at, minutes) {
   const p = period(at, Math.floor(minutes / 30));
   if (p.lit) return describe(p, minutes).slice(0, 3);
   const {day, time} = stamp(p.end, true), left = span(p.end * 30 - minutes);
   return [T.powerBack, p.openEnd ? T.notBefore(left) : T.inTime(left), T.atTime(day, time),
           p.openEnd ? T.noFurtherSchedule : ''];
+}
+
+// Until when a period lasts, in words: its end, or the end of the day with which the schedule
+// stops (it is published in whole days).
+function untilEnd(p) {
+  const {day, time} = stamp(p.end, true);
+  return p.openEnd ? `${day}${T.tillDayEnd}` : T.till(day, time);
+}
+
+// What holds now, as the headline's three lines: the state, until when, and how long that still
+// is. Power that lasts as far as the schedule goes has no end to count down to.
+function status(at, minutes) {
+  const p = period(at, Math.floor(minutes / 30));
+  return [(p.lit ? T.power : T.noPower)[1], untilEnd(p), p.lit && p.openEnd ? '' : T.more(span(p.end * 30 - minutes))];
+}
+
+// The status as a notification: what holds now and what follows it. The state names its icons; the
+// half-lit one stands for a day with no schedule.
+function statusNotice(days, now) {
+  if (!days[now.date]) return {state: NAMES[MAYBE], title: T.noScheduleToday, body: ''};
+  const at = timeline(days, now.date), p = period(at, Math.floor(now.minutes / 30));
+  const next = !p.openEnd && period(at, p.end);
+  return {
+    state: NAMES[p.lit ? ON : OFF],
+    title: status(at, now.minutes).slice(0, 2).join(' '),
+    body: next ? T.next(next.lit, untilEnd(next)) : p.end === SLOTS ? T.noScheduleTomorrow : '',
+  };
 }

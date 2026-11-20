@@ -1,5 +1,5 @@
-// Schedule logic shared by the page and the service worker (which loads it with importScripts).
-// Its words come from i18n.js.
+// The source and its schedule, the clock, and the pieces of the status notification: shared by the
+// page and the service worker (which loads it with importScripts). Its words come from i18n.js.
 
 const SOURCE = 'https://www.poe.pl.ua/customs/dynamicgpv-info.php';
 const SLOTS = 48;
@@ -18,7 +18,7 @@ const prefsPut = async (key, value) => (await caches.open(PREFS)).put(key, new R
 const STATUS_TAG = 'status';
 
 const pad = n => String(n).padStart(2, '0');
-const hhmm = slot => slot === SLOTS ? '24:00' : `${pad(slot >> 1)}:${slot % 2 ? '30' : '00'}`;
+const hhmm = slot => `${pad(slot >> 1)}:${slot % 2 ? '30' : '00'}`;
 const span = min => [Math.floor(min / 60) && T.hours(Math.floor(min / 60)), min % 60 && T.minutes(min % 60)]
   .filter(Boolean).join(' ') || T.lessThanMinute;
 
@@ -29,8 +29,11 @@ const TZ = ['Europe/Kyiv', 'Europe/Kiev'].find(tz => {
 const clock = new Intl.DateTimeFormat('en-CA', {timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
                                                 hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
 
+// A date taken apart by a format: {year, month, day, weekday, hour, minute}, whichever it gives.
+const parts = (format, date) => Object.fromEntries(format.formatToParts(date).map(part => [part.type, part.value]));
+
 function kyivNow() {
-  const p = Object.fromEntries(clock.formatToParts(new Date()).map(x => [x.type, x.value]));
+  const p = parts(clock, new Date());
   return {date: `${p.year}-${p.month}-${p.day}`, minutes: +p.hour * 60 + +p.minute};
 }
 function shiftDate(iso, days) {
@@ -38,13 +41,23 @@ function shiftDate(iso, days) {
   return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 }
 
-// Every queue's half-hours per day, {iso date: {queue: cells}}, and when the source last changed it.
-// Works on the text alone: a service worker has no DOM to parse the page with.
+// A date matched by DATE, as an ISO date.
+const isoDate = ([, day, month, year]) => `${year}-${pad(MONTHS.indexOf(month) + 1)}-${pad(day)}`;
+
+// Every queue's half-hours per day, {iso date: {queue: cells}}, and when the source last changed
+// any of them, as 'YYYY-MM-DD HH:MM'. Works on the text alone: a service worker has no DOM to parse
+// the page with.
 function parseSchedule(html) {
   const days = {};
+  let updated = null;
   for (const part of html.split('class="gpvinfodetail"').slice(1)) {
     const block = part.replace(/<style[\s\S]*?<\/style>/g, '');
-    // "року" tells the day's heading from the "Оновлено" stamp, which carries a date too.
+    // Each day says when it was last changed; the latest of them dates the schedule.
+    const from = block.indexOf('Оновлено:');
+    const stamp = from >= 0 && block.slice(from, from + 400).replace(/<[^>]*>/g, ' ').match(new RegExp(`${DATE}\\s+(\\d{1,2}:\\d{2})`));
+    const changed = stamp && `${isoDate(stamp)} ${stamp[4].padStart(5, '0')}`;
+    if (changed && (!updated || changed > updated)) updated = changed;
+    // "року" tells the day's heading from that stamp, which carries a date too.
     const day = block.match(new RegExp(`${DATE} року`));
     const table = block.match(/<table[\s\S]*?<\/table>/);
     if (!day || !table) continue;
@@ -57,10 +70,9 @@ function parseSchedule(html) {
       if (cells.length === SLOTS) queues[name] = cells;
       else console.warn(`queue ${name}: expected ${SLOTS} half-hours, got ${cells.length}`);
     }
-    if (Object.keys(queues).length) days[`${day[3]}-${pad(MONTHS.indexOf(day[2]) + 1)}-${pad(day[1])}`] = queues;
+    if (Object.keys(queues).length) days[isoDate(day)] = queues;
   }
-  const updated = html.replace(/<[^>]*>/g, ' ').match(new RegExp(`Оновлено:\\s*${DATE}\\s+(\\d{1,2}:\\d{2})`));
-  return {days, updated: updated && {day: +updated[1], month: MONTHS.indexOf(updated[2]) + 1, time: updated[4]}};
+  return {days, updated};
 }
 
 // The source's schedule as it is now, stamped with the time it was read. The time limit keeps a
@@ -69,7 +81,10 @@ function parseSchedule(html) {
 async function fetchSchedule() {
   const response = await fetch(SOURCE, {cache: 'no-store', signal: AbortSignal.timeout?.(30e3)});
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return {...parseSchedule(await response.text()), fetchedAt: Date.now()};
+  const schedule = parseSchedule(await response.text());
+  // A page with no schedule in it (maintenance, a changed layout) must not replace a copy that has one.
+  if (!Object.keys(schedule.days).length) throw new Error('no schedule in the answer');
+  return {...schedule, fetchedAt: Date.now()};
 }
 
 // One queue's days out of a schedule that holds every queue: {iso date: {queue: cells}} -> {iso date: cells}.
@@ -77,57 +92,8 @@ function daysOf(days, queue) {
   return Object.fromEntries(Object.entries(days).flatMap(([iso, queues]) => queues[queue] ? [[iso, queues[queue]]] : []));
 }
 
-// The switching half-hours that follow an outage count as power: as a rule it is back by then.
-const lit = cell => cell === ON || cell === MAYBE;
-
-// Runs of half-hours without power; late closes the switching half-hours right after a run, while
-// the power may still be on its way back.
-function outages(cells) {
-  const runs = [];
-  for (let i = 0; i < cells.length; i++) {
-    if (cells[i] !== OFF) continue;
-    const start = i;
-    while (cells[i + 1] === OFF) i++;
-    let late = i + 1;
-    while (cells[late] === MAYBE) late++;
-    runs.push({start, end: i + 1, late});
-  }
-  return runs;
-}
-
-// What holds at the given minute, power (ON) or none (OFF), and the half-hour it lasts until.
-function current(cells, minutes) {
-  const slot = Math.floor(minutes / 30), on = lit(cells[slot]);
-  let end = slot;
-  while (end < SLOTS && lit(cells[end]) === on) end++;
-  return {state: on ? ON : OFF, end};
-}
-
-function status(cells, minutes) {
-  const {state, end} = current(cells, minutes);
-  const title = (state === ON ? T.power : T.noPower)[1];
-  if (state === ON && end === SLOTS) return [title, T.tillDayEnd, ''];
-  return [title, T.till(hhmm(end)), T.more(span(end * 30 - minutes))];
-}
-
-// The status as a notification: what holds now and what follows it. The state names its icons; the
-// half-lit one stands for a day with no schedule.
-function statusNotice(days, now) {
-  const cells = days[now.date];
-  if (!cells) return {state: NAMES[MAYBE], title: T.noScheduleToday, body: ''};
-  const {state, end} = current(cells, now.minutes);
-  const [title, until] = status(cells, now.minutes);
-  const later = end < SLOTS ? cells : days[shiftDate(now.date, 1)];
-  const minute = end % SLOTS * 30;
-  return {
-    state: NAMES[state],
-    title: `${title} ${until}`,
-    body: later ? T.next(end === SLOTS, current(later, minute).state === ON, status(later, minute)[1]) : T.noScheduleTomorrow,
-  };
-}
+// A state's picture for the notification and its glyph for the status bar.
+const statusIcons = state => ({icon: `status-${state}.png`, badge: `badge-${state}.png`});
 
 // One notification, replaced in place and without a sound each time the status is shown again.
-const statusOptions = notice => ({
-  body: notice.body, tag: STATUS_TAG, silent: true,
-  icon: `status-${notice.state}.png`, badge: `badge-${notice.state}.png`,
-});
+const statusOptions = notice => ({body: notice.body, tag: STATUS_TAG, silent: true, ...statusIcons(notice.state)});

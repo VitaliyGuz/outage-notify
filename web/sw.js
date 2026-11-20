@@ -1,17 +1,22 @@
-importScripts('js/lang/ru.js', 'js/lang/uk.js', 'js/lang/en.js', 'js/i18n.js', 'js/schedule.js');
+// The scripts the status notification is made with; the page loads them too, before its own.
+const SHARED = ['lang/ru', 'lang/uk', 'lang/en', 'i18n', 'schedule', 'timeline'].map(name => `js/${name}.js`);
+importScripts(...SHARED);
 
-const CACHE = 'svet-v5';
+const CACHE = 'svet-v7';
 // Every file of the app, kept for use offline: a new stylesheet or script goes on this list as well
 // as into index.html.
 const SHELL = ['./', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png',
                ...['page', 'watch'].map(name => `css/${name}.css`),
-               ...['lang/ru', 'lang/uk', 'lang/en', 'i18n', 'schedule', 'base', 'timeline', 'watch', 'controls', 'lists',
-                   'notify', 'app'].map(name => `js/${name}.js`),
-               ...Object.values(NAMES).flatMap(state => [`status-${state}.png`, `badge-${state}.png`])];
-const MAX_AGE_MS = 15 * 60e3;
+               ...SHARED,
+               ...['base', 'watch', 'controls', 'lists', 'notify', 'app'].map(name => `js/${name}.js`),
+               ...Object.values(NAMES).flatMap(state => Object.values(statusIcons(state)))];
+// Shorter than the quarter of an hour between two pushes, so that each of them loads the schedule anew.
+const MAX_AGE_MS = 10 * 60e3;
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+  // Past the browser's own cache, like every later request: the files kept must be of one deploy.
+  const fresh = SHELL.map(url => new Request(url, {cache: 'no-cache'}));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(fresh)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {

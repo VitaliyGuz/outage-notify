@@ -1,4 +1,5 @@
-// What the page's other scripts stand on: element lookup and creation, and the settings store.
+// What the page's other scripts stand on: element lookup and creation, the settings store, and
+// dates in the interface's language. Uses schedule.js, i18n.js.
 
 const $ = id => document.getElementById(id);
 const el = (tag, props) => Object.assign(document.createElement(tag), props);
@@ -14,3 +15,11 @@ const store = {
     if (SHARED.includes(key) && 'caches' in window) prefsPut(key, value).catch(() => {});
   },
 };
+
+// A format for dates or times in the interface's language and in Kyiv time, each made once.
+const formats = new Map();
+function dated(options) {
+  const key = LANG + JSON.stringify(options);
+  if (!formats.has(key)) formats.set(key, new Intl.DateTimeFormat(LANG, {timeZone: TZ, ...options}));
+  return formats.get(key);
+}
