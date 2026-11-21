@@ -127,7 +127,7 @@ function renderDial(now, days) {
   view = null;
   if (days[now.date]) {
     const at = timeline(days, now.date);
-    const base = windowStart(at, slot), {min, max} = windowBounds(at);
+    const {min, max} = windowBounds(at), base = clamp(windowStart(at, now.minutes), min, max);
     view = {at, base, min, max, start: pinned === null ? base : clamp(pinned, min, max)};
   }
   const start = view?.start ?? 0;

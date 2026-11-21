@@ -3,8 +3,8 @@
 // among it. Nothing here touches the page, and the service worker loads it too. Uses schedule.js,
 // i18n.js.
 
-// The window, in half-hours.
-const WINDOW = 24;
+// The window, and how far back from now it may open, in half-hours.
+const WINDOW = 24, PAST = 2;
 
 const mod = (n, m) => ((n % m) + m) % m;
 const clamp = (n, min, max) => Math.min(Math.max(n, min), max);
@@ -44,15 +44,12 @@ function timeline(days, today) {
   return slot => around[Math.floor(slot / SLOTS) + 1]?.[mod(slot, SLOTS)];
 }
 
-// The 12-hour window opens at the last switch between power and outage; with no switch in the last
-// 12 hours it opens at the current hour. A window that would run into a tomorrow not published yet
-// is the second half of today instead.
-function windowStart(at, slot) {
-  const on = lit(at(slot));
-  let start = slot;
-  while (slot - start < WINDOW && at(start - 1) !== undefined && lit(at(start - 1)) === on) start--;
-  if (slot - start >= WINDOW) start = slot - slot % 2;
-  return at(start + WINDOW - 1) === undefined ? SLOTS - WINDOW : start;
+// Where the 12-hour window would best open: at the last switch between power and outage, but no
+// more than an hour back (at a half-hour mark), so that eleven hours of it or more lie ahead. The
+// caller keeps the window inside the published days: one that would run into a tomorrow not
+// published yet is the second half of today instead, with more of the past in it.
+function windowStart(at, minutes) {
+  return Math.max(period(at, Math.floor(minutes / 30)).start, Math.ceil(minutes / 30) - PAST);
 }
 // How far the bezel turns the window: it stays inside the published days around today.
 function windowBounds(at) {
