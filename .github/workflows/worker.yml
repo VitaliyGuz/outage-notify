@@ -22,6 +22,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # First the database, so that the code never runs against a table it does not know.
+      - name: Apply database migrations
+        working-directory: worker
+        run: npx --yes wrangler@4 d1 migrations apply outage-notify --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       # The worker's secret (VAPID_PRIVATE_KEY) lives in Cloudflare and is not touched by a deploy.
       - name: Deploy
         working-directory: worker

@@ -61,22 +61,46 @@ async function push(endpoint, authorization) {
   }
 }
 
+// What is kept about a device besides its address, for the list's owner to tell its devices apart:
+// what the page says of itself, taken only in the forms the page sends it in, and where Cloudflare
+// places the request. Neither the IP address nor anything finer than the city is kept.
+const DETAILS = ['queue', 'lang', 'device', 'user_agent', 'country', 'region', 'city', 'isp'];
+function details(request, body) {
+  const text = (value, max) => typeof value === 'string' && value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max) || null;
+  const cf = request.cf ?? {};
+  return [
+    typeof body.queue === 'string' && /^\d\.\d$/.test(body.queue) ? body.queue : null,
+    ['ru', 'uk', 'en'].includes(body.lang) ? body.lang : null,
+    text(body.device, 120),
+    text(request.headers.get('User-Agent'), 300),
+    text(cf.country, 8), text(cf.region, 80), text(cf.city, 80), text(cf.asOrganization, 120),
+  ];
+}
+
 // Adds the device in the request to the list or, on the unsubscribe route, removes it; returns the HTTP status.
 async function register(request, env, remove) {
-  const endpoint = pushEndpoint((await request.json().catch(() => ({}))).endpoint);
+  const body = await request.json().catch(() => null) ?? {};
+  const endpoint = pushEndpoint(body.endpoint);
   if (!endpoint) return 400;
   if (remove) {
     await forget(env, endpoint);
     return 204;
   }
-  // A device already on the list is welcome back even when the list is full.
-  if (await env.DB.prepare('SELECT 1 FROM subscriptions WHERE endpoint = ?').bind(endpoint).first()) return 204;
+  // A device already on the list is welcome back even when the list is full, and what is known of
+  // it is brought up to date.
+  const seen = details(request, body);
+  const known = await env.DB.prepare(
+    `UPDATE subscriptions SET seen_at = CURRENT_TIMESTAMP, ${DETAILS.map(name => `${name} = ?`).join(', ')} WHERE endpoint = ?`,
+  ).bind(...seen, endpoint).run();
+  if (known.meta.changes) return 204;
   const {total} = await env.DB.prepare('SELECT COUNT(*) AS total FROM subscriptions').first();
   if (total >= MAX_SUBSCRIPTIONS) return 507;
   // A device joins the list only once a nudge has reached it: anyone can post an address here, and
   // made-up ones would otherwise fill the list for good, as only a push service's refusal removes one.
   if (await push(endpoint, vapid(env, new URL(endpoint).origin)) !== 'sent') return 400;
-  await env.DB.prepare('INSERT OR IGNORE INTO subscriptions (endpoint) VALUES (?)').bind(endpoint).run();
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO subscriptions (endpoint, seen_at, ${DETAILS.join(', ')}) VALUES (?, CURRENT_TIMESTAMP${', ?'.repeat(DETAILS.length)})`,
+  ).bind(endpoint, ...seen).run();
   return 204;
 }
 

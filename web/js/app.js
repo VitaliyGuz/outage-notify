@@ -82,6 +82,7 @@ $('queue').addEventListener('change', e => {
   queue = e.target.value;
   store.set('queue', queue);
   update();
+  relist();
   if (!data || failed) load();
 });
 // Coming back to the page reloads the schedule unless it was loaded within the last minute.
@@ -104,5 +105,4 @@ load();
 // A hidden page keeps the schedule fresh only for the notifications it is responsible for.
 setInterval(() => { if (!document.hidden || notifyOn() || statusOn()) load(); }, REFRESH_MS);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
-// A device that shows the status enlists again on every start, in case the worker has dropped it.
-if (statusOn()) navigator.serviceWorker.ready.then(enlistDevice).catch(e => console.warn('status push:', e));
+relist();

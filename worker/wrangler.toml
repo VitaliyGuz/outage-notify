@@ -2,7 +2,7 @@ name = "outage-notify"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 
-# States change on the half-hour, so a nudge every five minutes lands right on each change.
+# States change on the half-hour, so a nudge every quarter of an hour lands right on each change.
 [triggers]
 crons = ["*/15 * * * *"]
 
@@ -18,3 +18,4 @@ VAPID_PUBLIC_KEY = "BF5-2NY2Un22wD8YqqqAabhGnaqdK_Sk1XVRjV-ieRhI13UnxteOVpwOKYbF
 binding = "DB"
 database_name = "outage-notify"
 database_id = "682ea8e1-d868-4d68-b789-45d751a6f4e2"
+migrations_dir = "migrations"

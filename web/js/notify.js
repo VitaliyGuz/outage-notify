@@ -44,10 +44,25 @@ function renderNotify() {
     : pushFailed ? T.pushFailed : statusOn() ? T.statusHintOn : T.statusHintOff;
 }
 
-// Puts this device on the worker's list of devices to nudge, or takes it off.
+// What the browser tells of the device it runs on: the system, the browser and, where it gives it,
+// the model. Empty where it has no such thing to ask (Safari, Firefox); the worker then has only
+// the request's User-Agent to go by.
+async function deviceName() {
+  const ua = navigator.userAgentData;
+  if (!ua) return '';
+  const {platformVersion, model} = await ua.getHighEntropyValues(['platformVersion', 'model']).catch(() => ({}));
+  const browser = ua.brands.find(b => !/not.?a.?brand|chromium/i.test(b.brand)) ?? ua.brands[0];
+  return [`${ua.platform} ${platformVersion ?? ''}`.trim(), browser && `${browser.brand} ${browser.version}`, model]
+    .filter(Boolean).join(', ');
+}
+
+// Puts this device on the worker's list of devices to nudge, or takes it off. With its address go
+// the queue, the language and the device's name, by which the list's owner tells its devices apart.
 async function enlist(subscription, on) {
+  const details = on && {queue, lang: LANG, device: await deviceName()};
   const response = await fetch(`${PUSH_API}/${on ? 'subscribe' : 'unsubscribe'}`, {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({endpoint: subscription.endpoint}),
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({endpoint: subscription.endpoint, ...details}),
   });
   if (!response.ok) throw new Error(`${PUSH_API}: HTTP ${response.status}`);
 }
@@ -55,6 +70,11 @@ const enlistDevice = async registration => enlist(
   await registration.pushManager.getSubscription()
     ?? await registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: VAPID_PUBLIC_KEY}),
   true);
+// A device that shows the status tells the worker of itself again: the worker may have dropped it,
+// and what it knows of the device may be out of date.
+function relist() {
+  if (statusOn()) navigator.serviceWorker.ready.then(enlistDevice).catch(e => console.warn('status push:', e));
+}
 
 // A notification through the service worker; true once it is up. A failure is only logged: the
 // caller leaves it unrecorded and so tries again on the next minute.
